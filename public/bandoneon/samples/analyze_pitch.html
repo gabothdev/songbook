@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analizador de Pitch - Samples Bandoneón</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .sample-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #f9f9f9;
+        }
+        .sample-item button {
+            margin-right: 10px;
+            padding: 5px 10px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .sample-item button:hover {
+            background: #2563eb;
+        }
+        .sample-info {
+            flex: 1;
+            font-family: monospace;
+        }
+        .note-select {
+            margin-left: 10px;
+            padding: 5px;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 15px;
+            background: #e5f3ff;
+            border-radius: 5px;
+        }
+        .detected-pitch {
+            font-weight: bold;
+            color: #059669;
+        }
+        .canvas-container {
+            margin: 20px 0;
+            text-align: center;
+        }
+        canvas {
+            border: 1px solid #ddd;
+            background: white;
+        }
+        .mapping-result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f0fdf4;
+            border: 1px solid #16a34a;
+            border-radius: 5px;
+        }
+        .frequency-display {
+            font-size: 14px;
+            color: #666;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Analizador de Pitch - Samples de Bandoneón</h1>
+        <p>Esta herramienta analiza cada sample para identificar su nota real y crear el mapeo correcto.</p>
+        
+        <div class="controls">
+            <h3>📊 Análisis de Frecuencia</h3>
+            <canvas id="canvas" width="800" height="200"></canvas>
+            <div id="pitchDisplay" class="detected-pitch">Presiona un sample para analizar...</div>
+        </div>
+        
+        <div id="samplesList">
+            <!-- Los samples se cargarán aquí dinámicamente -->
+        </div>
+        
+        <div class="controls">
+            <button onclick="generateMapping()" style="background: #059669; padding: 10px 20px; font-size: 16px;">
+                📝 Generar Mapeo Correcto
+            </button>
+            <button onclick="testMapping()" style="background: #dc2626; padding: 10px 20px; font-size: 16px; margin-left: 10px;">
+                🎵 Probar Mapeo Actual
+            </button>
+        </div>
+        
+        <div id="mappingResult" class="mapping-result" style="display: none;">
+            <h3>📋 Mapeo Generado</h3>
+            <pre id="mappingCode"></pre>
+        </div>
+    </div>
+
+    <script>
+        // Configuración de análisis de audio
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let canvas, canvasCtx;
+        let currentAudio = null;
+        
+        // Lista de samples disponibles (se detectarán automáticamente)
+        const availableSamples = [];
+        const sampleMappings = new Map(); // sample -> nota detectada
+        
+        // Frecuencias de notas musicales (A4 = 440Hz)
+        const noteFrequencies = {
+            'C3': 130.81, 'C#3': 138.59, 'D3': 146.83, 'D#3': 155.56, 'E3': 164.81,
+            'F3': 174.61, 'F#3': 185.00, 'G3': 196.00, 'G#3': 207.65, 'A3': 220.00,
+            'A#3': 233.08, 'B3': 246.94,
+            'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13, 'E4': 329.63,
+            'F4': 349.23, 'F#4': 369.99, 'G4': 392.00, 'G#4': 415.30, 'A4': 440.00,
+            'A#4': 466.16, 'B4': 493.88,
+            'C5': 523.25, 'C#5': 554.37, 'D5': 587.33, 'D#5': 622.25, 'E5': 659.25
+        };
+
+        async function initAudio() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 8192; // Alta resolución para mejor detección de pitch
+            analyser.smoothingTimeConstant = 0.3;
+            
+            const bufferLength = analyser.frequencyBinCount;
+            dataArray = new Uint8Array(bufferLength);
+            
+            canvas = document.getElementById('canvas');
+            canvasCtx = canvas.getContext('2d');
+        }
+
+        async function detectSamples() {
+            console.log('🔍 Detectando samples disponibles...');
+            
+            // Lista de archivos esperados
+            const expectedFiles = [
+                'A3.wav', 'A4.wav', 'B3.wav', 'B4.wav', 'C3.wav', 'C4.wav', 'C5.wav',
+                'D3.wav', 'D4.wav', 'E3.wav', 'E4.wav', 'F3.wav', 'F4.wav', 'G3.wav', 'G4.wav'
+            ];
+            
+            for (const file of expectedFiles) {
+                try {
+                    const response = await fetch(file, { method: 'HEAD' });
+                    if (response.ok) {
+                        availableSamples.push(file);
+                    }
+                } catch (error) {
+                    console.log(`Sample ${file} no disponible`);
+                }
+            }
+            
+            console.log(`✅ ${availableSamples.length} samples encontrados:`, availableSamples);
+        }
+
+        function frequencyToNote(frequency) {
+            let minDiff = Infinity;
+            let closestNote = '';
+            
+            for (const [note, freq] of Object.entries(noteFrequencies)) {
+                const diff = Math.abs(frequency - freq);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closestNote = note;
+                }
+            }
+            
+            return { note: closestNote, difference: minDiff };
+        }
+
+        function detectPitch(dataArray, sampleRate) {
+            // Algoritmo de detección de pitch usando autocorrelación
+            const SIZE = dataArray.length;
+            const MAX_SAMPLES = Math.floor(SIZE / 2);
+            const correlations = new Array(MAX_SAMPLES);
+            
+            // Calcular autocorrelación
+            for (let i = 0; i < MAX_SAMPLES; i++) {
+                let sum = 0;
+                for (let j = 0; j < MAX_SAMPLES; j++) {
+                    sum += ((dataArray[j] - 128) / 128) * ((dataArray[j + i] - 128) / 128);
+                }
+                correlations[i] = sum;
+            }
+            
+            // Encontrar el primer pico después de la frecuencia mínima
+            let maxval = -1;
+            let maxpos = -1;
+            
+            const minFreq = 50; // Hz
+            const maxFreq = 1000; // Hz
+            const minSamples = Math.ceil(sampleRate / maxFreq);
+            const maxSamples = Math.floor(sampleRate / minFreq);
+            
+            for (let i = minSamples; i < Math.min(maxSamples, correlations.length); i++) {
+                if (correlations[i] > maxval) {
+                    maxval = correlations[i];
+                    maxpos = i;
+                }
+            }
+            
+            if (maxpos === -1) return 0;
+            
+            // Interpolación parabólica para mayor precisión
+            let y1 = correlations[maxpos - 1] || 0;
+            let y2 = correlations[maxpos];
+            let y3 = correlations[maxpos + 1] || 0;
+            
+            let a = (y1 - 2 * y2 + y3) / 2;
+            let b = (y3 - y1) / 2;
+            
+            let xp = -b / (2 * a);
+            
+            return sampleRate / (maxpos + xp);
+        }
+
+        async function analyzeSample(filename) {
+            try {
+                console.log(`🔊 Analizando ${filename}...`);
+                
+                if (currentAudio) {
+                    currentAudio.pause();
+                }
+                
+                // Cargar y reproducir audio
+                const audio = new Audio(filename);
+                currentAudio = audio;
+                
+                await new Promise((resolve, reject) => {
+                    audio.addEventListener('canplaythrough', resolve);
+                    audio.addEventListener('error', reject);
+                    audio.load();
+                });
+                
+                // Crear nodo de análisis
+                const source = audioContext.createMediaElementSource(audio);
+                source.connect(analyser);
+                analyser.connect(audioContext.destination);
+                
+                audio.play();
+                
+                // Analizar después de un breve delay para estabilización
+                setTimeout(() => {
+                    analyser.getByteTimeDomainData(dataArray);
+                    
+                    const frequency = detectPitch(dataArray, audioContext.sampleRate);
+                    const noteInfo = frequencyToNote(frequency);
+                    
+                    document.getElementById('pitchDisplay').innerHTML = `
+                        <strong>${filename}</strong><br>
+                        Frecuencia detectada: <span class="frequency-display">${frequency.toFixed(2)} Hz</span><br>
+                        Nota más cercana: <strong>${noteInfo.note}</strong> (diferencia: ${noteInfo.difference.toFixed(2)} Hz)
+                    `;
+                    
+                    // Guardar mapeo
+                    sampleMappings.set(filename, noteInfo.note);
+                    
+                    // Visualizar forma de onda
+                    drawWaveform();
+                    
+                    console.log(`📊 ${filename}: ${frequency.toFixed(2)} Hz → ${noteInfo.note}`);
+                }, 500);
+                
+            } catch (error) {
+                console.error(`Error analizando ${filename}:`, error);
+                document.getElementById('pitchDisplay').textContent = `Error analizando ${filename}: ${error.message}`;
+            }
+        }
+
+        function drawWaveform() {
+            const WIDTH = canvas.width;
+            const HEIGHT = canvas.height;
+            
+            analyser.getByteTimeDomainData(dataArray);
+            
+            canvasCtx.fillStyle = 'rgb(255, 255, 255)';
+            canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+            
+            canvasCtx.lineWidth = 2;
+            canvasCtx.strokeStyle = 'rgb(59, 130, 246)';
+            canvasCtx.beginPath();
+            
+            const sliceWidth = WIDTH * 1.0 / dataArray.length;
+            let x = 0;
+            
+            for (let i = 0; i < dataArray.length; i++) {
+                const v = dataArray[i] / 128.0;
+                const y = v * HEIGHT / 2;
+                
+                if (i === 0) {
+                    canvasCtx.moveTo(x, y);
+                } else {
+                    canvasCtx.lineTo(x, y);
+                }
+                
+                x += sliceWidth;
+            }
+            
+            canvasCtx.stroke();
+        }
+
+        function createSamplesList() {
+            const container = document.getElementById('samplesList');
+            container.innerHTML = '<h3>🎵 Samples Disponibles para Análisis</h3>';
+            
+            availableSamples.forEach(filename => {
+                const item = document.createElement('div');
+                item.className = 'sample-item';
+                
+                item.innerHTML = `
+                    <button onclick="analyzeSample('${filename}')">▶ Analizar</button>
+                    <div class="sample-info">
+                        <strong>${filename}</strong>
+                        <span id="result-${filename}" class="frequency-display"></span>
+                    </div>
+                    <select class="note-select" id="manual-${filename}">
+                        <option value="">-- Seleccionar nota manual --</option>
+                        ${Object.keys(noteFrequencies).map(note => 
+                            `<option value="${note}">${note}</option>`
+                        ).join('')}
+                    </select>
+                `;
+                
+                container.appendChild(item);
+            });
+        }
+
+        function generateMapping() {
+            console.log('📝 Generando mapeo correcto...');
+            
+            const mapping = {};
+            const usedNotes = new Set();
+            
+            // Combinar detección automática y selección manual
+            availableSamples.forEach(filename => {
+                const manualSelect = document.getElementById(`manual-${filename}`);
+                const manualNote = manualSelect.value;
+                
+                let assignedNote;
+                if (manualNote) {
+                    assignedNote = manualNote;
+                } else if (sampleMappings.has(filename)) {
+                    assignedNote = sampleMappings.get(filename);
+                } else {
+                    // Fallback: usar el nombre del archivo
+                    assignedNote = filename.replace('.wav', '');
+                }
+                
+                // Evitar duplicados
+                if (usedNotes.has(assignedNote)) {
+                    assignedNote = assignedNote + '_alt';
+                }
+                
+                mapping[assignedNote] = filename;
+                usedNotes.add(assignedNote);
+            });
+            
+            // Mostrar resultado
+            const mappingCode = `// Mapeo correcto de samples de bandoneón
+const SAMPLE_CONFIG = {
+${Object.entries(mapping).map(([note, file]) => 
+    `  '${note}': '/bandoneon/samples/${file}'`
+).join(',\\n')}
+};`;
+            
+            document.getElementById('mappingCode').textContent = mappingCode;
+            document.getElementById('mappingResult').style.display = 'block';
+            
+            console.log('✅ Mapeo generado:', mapping);
+        }
+
+        async function testMapping() {
+            console.log('🎵 Probando mapeo actual...');
+            
+            const testNotes = ['C4', 'D4', 'E4', 'F4', 'G4'];
+            
+            for (let i = 0; i < testNotes.length; i++) {
+                const note = testNotes[i];
+                const filename = `${note}.wav`;
+                
+                setTimeout(() => {
+                    console.log(`🎹 Reproduciendo ${note} (${filename})`);
+                    const audio = new Audio(filename);
+                    audio.play().catch(console.error);
+                }, i * 1000);
+            }
+        }
+
+        // Inicializar al cargar la página
+        window.addEventListener('load', async () => {
+            await initAudio();
+            await detectSamples();
+            createSamplesList();
+            
+            console.log('🔍 Analizador de pitch listo. Haz clic en "▶ Analizar" para cada sample.');
+        });
+
+        // Activar contexto de audio en primer clic
+        document.addEventListener('click', async () => {
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+            }
+        }, { once: true });
+    </script>
+</body>
+</html>

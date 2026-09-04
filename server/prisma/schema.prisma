@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Song {
+  id          String   @id @default(cuid())
+  title       String
+  artist      String
+  content     String
+  youtubeId   String?  // ID del video de YouTube
+  syncData    String?  // JSON con los timestamps [{line: 0, time: 2.5}, ...]
+  transpose   Int?     @default(0) // Transposición semitonal guardada
+  chordVariants String? // JSON con variaciones de acordes seleccionadas {"C": 1, "G": 0}
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  favorites   Favorite[]
+  setlistSongs SetlistSong[]
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  song      Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  songId    String
+  createdAt DateTime @default(now())
+}
+
+model Setlist {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  songs     SetlistSong[]
+}
+
+model SetlistSong {
+  id        String   @id @default(cuid())
+  setlist   Setlist  @relation(fields: [setlistId], references: [id], onDelete: Cascade)
+  setlistId String
+  song      Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  songId    String
+  order     Int      @default(0)
+}
+
+model CustomChord {
+  id         String   @id @default(cuid())
+  instrument String   // "guitar", "bandoneon", etc.
+  chordName  String
+  data       String   // Guardamos el JSON como String
+  createdAt  DateTime @default(now())
+}
+
+model ChordDefinition {
+  id          String   @id @default(cuid())
+  instrument  String   @default("guitar") // "guitar", "bandoneon", "ukulele"
+  key         String   // "C", "D", "F#", "Bb", etc.
+  suffix      String   // "major", "minor", "7", "m7", "dim", "sus4", etc.
+  chordName   String   // "C", "Cm", "C7", "F#m", etc.
+  positions   String   // JSON string con las variantes [{ frets, fingers, barres, capo }, ...]
+  createdAt   DateTime @default(now())
+
+  @@unique([instrument, chordName])
+  @@index([chordName])
+  @@index([instrument, key])
+}

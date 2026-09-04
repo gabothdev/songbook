@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+}
+
+/* Custom wooden desk lighting background */
+.desk-surface {
+  background-color: #14110f;
+  background-image: 
+    radial-gradient(ellipse at 50% 0%, rgba(251, 191, 36, 0.08) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 80%, rgba(180, 83, 9, 0.05) 0%, transparent 50%),
+    linear-gradient(180deg, #1c1815 0%, #100d0b 100%);
+}
+
+/* Realistic paper textures */
+.paper-texture {
+  background-color: #fcf9f2;
+  background-image: 
+    radial-gradient(rgba(0, 0, 0, 0.015) 1px, transparent 0);
+  background-size: 16px 16px;
+}
+
+.dark-paper-texture {
+  background-color: #21201d;
+  background-image: 
+    radial-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 0);
+  background-size: 16px 16px;
+}
+
+/* Paper margin line (red/rose vertical rule like school & song notebooks) */
+.paper-margin-line {
+  position: relative;
+}
+.paper-margin-line::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3rem;
+  width: 1.5px;
+  background-color: rgba(239, 68, 68, 0.22);
+  pointer-events: none;
+}
+
+/* Perforated hole punch effect */
+.hole-punch {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #181412;
+  box-shadow: inset 1px 2px 3px rgba(0,0,0,0.8), 0 1px 1px rgba(255,255,255,0.4);
+}
+
+/* Custom handwritten font utility */
+.font-hand {
+  font-family: 'Caveat', 'Kalam', cursive;
+}
+
+.font-kalam {
+  font-family: 'Kalam', cursive;
+}
+
+/* Washi tape styling */
+.washi-tape {
+  background: rgba(254, 240, 138, 0.7);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  backdrop-filter: blur(1px);
+  clip-path: polygon(3% 0%, 97% 2%, 100% 98%, 0% 96%);
+}
+
+/* Animación para las cuerdas al rasguear el acorde (ChordKing style) */
+@keyframes vibrate {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-0.8px);
+  }
+  75% {
+    transform: translateX(0.8px);
+  }
+}
+
+.vibrating {
+  animation: vibrate 0.22s ease-in-out;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1c7b7;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b8ac97;
+}

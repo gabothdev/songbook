@@ -1,0 +1,175 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bandoneón · Demo SVG (sin fetch)</title>
+<style>
+  :root { --bg:#0f1115; --fg:#e8e8ea; --muted:#9aa0a6; --accent:#4ade80; --accent2:#60a5fa; }
+  body { font-family: system-ui, Segoe UI, Roboto, Arial; margin: 24px; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  select, input[type="text"] { padding: 8px 10px; background: #151821; color: var(--fg); border: 1px solid #2b3040; border-radius: 8px; }
+  button, label.file-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid #2b3040; background: #1b2030; color: var(--fg); cursor: pointer; }
+  button:hover, label.file-btn:hover { filter: brightness(1.15); }
+  input[type=file]{ display:none; }
+  #info { margin-top: 10px; color: var(--muted); }
+  svg { width: min(100%, 980px); height: 520px; background: #0b0d12; border: 1px solid #2b3040; border-radius: 12px; overflow: visible; }
+  .key { cursor: pointer; transition: transform .05s ease; }
+  .key:hover { transform: scale(1.05); }
+  .circle { stroke: #2b3040; fill: #121623; }
+  .label { font-size: 10px; fill: #cbd5e1; pointer-events: none; text-anchor: middle; dominant-baseline: middle; }
+  .highlight .circle { stroke: var(--accent); stroke-width: 2; fill: #102616; }
+  .openNote { fill: var(--accent); font-weight: 600; }
+  .closeNote { fill: var(--accent2); font-weight: 600; }
+  .legend { font-size: 12px; color: var(--muted); display:flex; gap:18px; align-items:center; margin:8px 0 14px }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:6px; }
+  #status { color: var(--muted); font-size: 12px; margin-left: 8px; }
+</style>
+
+<h1>Diagrama de Bandoneón (SVG)</h1>
+
+<div class="controls">
+  <label class="file-btn">
+    Cargar JSON
+    <input id="file" type="file" accept="application/json">
+  </label>
+  <span id="status">Ningún archivo cargado</span>
+</div>
+
+<div class="controls">
+  <label> Lado:
+    <select id="side">
+      <option value="right">Derecho</option>
+      <option value="left">Izquierdo</option>
+    </select>
+  </label>
+  <label> Fuelle:
+    <select id="bellows">
+      <option value="open">Abriendo</option>
+      <option value="close">Cerrando</option>
+    </select>
+  </label>
+  <label> Acorde (notas, separadas por coma):
+    <input id="chord" type="text" placeholder="C4,E4,G4">
+  </label>
+  <button id="apply">Resaltar acorde</button>
+  <button id="clear">Limpiar</button>
+</div>
+
+<div class="legend">
+  <span><span class="dot" style="background:#102616; border:1px solid #4ade80"></span>Resaltado</span>
+  <span><span class="dot" style="background:transparent; border:1px solid #2b3040"></span>Botón</span>
+  <span><span class="dot" style="background:transparent; border:1px solid #2b3040"></span>
+    <span class="openNote">open</span>/<span class="closeNote">close</span> etiqueta</span>
+</div>
+
+<svg id="stage" viewBox="0 0 1100 520" role="img" aria-label="Teclado de bandoneón"></svg>
+<div id="info">Tip: hacé clic en un botón para ver su <span class="openNote">openNote</span>/<span class="closeNote">closeNote</span>.</div>
+
+<script>
+const svg = document.getElementById('stage');
+const fileInput = document.getElementById('file');
+const statusEl = document.getElementById('status');
+const sideSel = document.getElementById('side');
+const bellowsSel = document.getElementById('bellows');
+const chordInput = document.getElementById('chord');
+const applyBtn = document.getElementById('apply');
+const clearBtn = document.getElementById('clear');
+
+let data = null;  // {right:[], left:[]}
+let nodes = [];
+
+fileInput.onchange = async () => {
+  const f = fileInput.files[0];
+  if (!f) return;
+  const text = await f.text();
+  try {
+    data = JSON.parse(text);
+    statusEl.textContent = `Cargado: ${f.name} ✓`;
+    render();
+  } catch(e) {
+    statusEl.textContent = `Error leyendo JSON: ${e.message}`;
+  }
+};
+
+sideSel.onchange = render;
+bellowsSel.onchange = () => { updateLabels(); highlightChord(); };
+applyBtn.onclick = () => highlightChord();
+clearBtn.onclick = () => { chordInput.value=''; highlightChord(); };
+
+function render(){
+  if (!data) { svg.innerHTML=''; return; }
+  svg.innerHTML = '';
+  nodes = [];
+
+  const side = sideSel.value;
+  const buttons = data[side] || [];
+  if (!buttons.length) return;
+
+  const cols = [...new Set(buttons.map(b => b.col))].sort((a,b)=>a-b);
+  const rows = [...new Set(buttons.map(b => b.row))].sort((a,b)=>a-b);
+  const maxRow = Math.max(...rows);
+
+  const PADX = 40, PADY = 40;
+  const gapX = 60, gapY = 70;
+  const radius = 18;
+  const mirror = (side === 'left');
+
+  for (const b of buttons) {
+    const xIndex = b.col - 1;
+    let x = PADX + xIndex * gapX;
+    if (mirror) {
+      const maxCols = Math.max(...cols) - 1;
+      x = PADX + (maxCols - xIndex) * gapX;
+    }
+    const y = PADY + ((maxRow - b.row) * gapY);
+
+    const g = createSvg('g', { class: 'key', transform: `translate(${x},${y})`, 'data-col': b.col, 'data-row': b.row });
+    const circle = createSvg('circle', { class: 'circle', r: radius, cx: 0, cy: 0 });
+    const text = createSvg('text', { class: 'label', x: 0, y: 0 });
+    text.textContent = bellowsSel.value === 'open' ? b.openNote : b.closeNote;
+
+    g.appendChild(circle);
+    g.appendChild(text);
+    g.onclick = () => alert(`col ${b.col}, row ${b.row}\nopen: ${b.openNote}\nclose: ${b.closeNote}`);
+    svg.appendChild(g);
+    nodes.push({ g, circle, text, data: b });
+  }
+
+  drawAxes(cols, rows, PADX, PADY, gapX, gapY, mirror);
+  updateLabels();
+  highlightChord();
+}
+
+function updateLabels(){
+  const open = (bellowsSel.value === 'open');
+  for (const n of nodes) n.text.textContent = open ? n.data.openNote : n.data.closeNote;
+}
+
+function highlightChord(){
+  const raw = chordInput.value.trim();
+  const set = new Set(raw ? raw.split(/\s*,\s*/).map(s=>s.toUpperCase()) : []);
+  const open = (bellowsSel.value === 'open');
+  for (const n of nodes) {
+    n.g.classList.toggle('highlight', set.size && set.has((open?n.data.openNote:n.data.closeNote).toUpperCase()));
+  }
+}
+
+function drawAxes(cols, rows, PADX, PADY, gapX, gapY, mirror){
+  for (const c of cols) {
+    const ix = c - 1;
+    let x = PADX + ix * gapX;
+    if (mirror) { const maxC = Math.max(...cols) - 1; x = PADX + (maxC - ix) * gapX; }
+    const t = createSvg('text', { x, y: 18, class: 'label' }); t.textContent = `C${c}`; svg.appendChild(t);
+  }
+  const maxRow = Math.max(...rows);
+  for (const r of rows) {
+    const y = PADY + ((maxRow - r) * gapY);
+    const t = createSvg('text', { x: 1060, y, class: 'label' }); t.textContent = `R${r}`; svg.appendChild(t);
+  }
+}
+
+function createSvg(tag, attrs={}){
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k,v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+</script>

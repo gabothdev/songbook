@@ -1,0 +1,244 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bandoneón · Editor de posiciones (SVG)</title>
+<style>
+  :root { --bg:#0f1115; --fg:#e8e8ea; --muted:#9aa0a6; --accent:#4ade80; --accent2:#60a5fa; }
+  body { font-family: system-ui, Segoe UI, Roboto, Arial; margin: 24px; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:10px 0 12px; }
+  button, label.file-btn { padding:8px 12px; border-radius:8px; border:1px solid #2b3040; background:#1b2030; color:var(--fg); cursor:pointer; }
+  button:hover, label.file-btn:hover { filter:brightness(1.15); }
+  select, input[type="text"] { padding:8px 10px; background:#151821; color:var(--fg); border:1px solid #2b3040; border-radius:8px; }
+  input[type=file]{ display:none; }
+  #status { color:var(--muted); font-size:12px; }
+  svg { width:min(100%,1000px); height:560px; background:#0b0d12; border:1px solid #2b3040; border-radius:12px; }
+  .key { cursor: pointer; }
+  .circle { stroke:#2b3040; fill:#121623; }
+  .label { font-size:10px; fill:#cbd5e1; pointer-events:none; text-anchor:middle; dominant-baseline:middle; }
+  .ghost { fill:none; stroke:#334155; stroke-dasharray:4 4; }
+  .axes text { font-size:10px; fill:#6b7280; }
+  .edit-on .key { cursor: move; }
+  .highlight .circle { stroke: var(--accent); stroke-width: 2; fill:#102616; }
+</style>
+
+<h1>Bandoneón · Editor de posiciones (SVG)</h1>
+
+<div class="controls">
+  <label class="file-btn">Cargar JSON<input id="file" type="file" accept="application/json"></label>
+  <span id="status">Ningún archivo cargado</span>
+</div>
+
+<div class="controls">
+  <label>Lado:
+    <select id="side">
+      <option value="right">Derecho</option>
+      <option value="left">Izquierdo</option>
+    </select>
+  </label>
+  <label>Fuelle:
+    <select id="bellows">
+      <option value="open">Abriendo</option>
+      <option value="close">Cerrando</option>
+    </select>
+  </label>
+  <label>Acorde:
+    <input id="chord" type="text" placeholder="C4,E4,G4">
+  </label>
+  <button id="apply">Resaltar acorde</button>
+  <button id="clear">Limpiar</button>
+  <button id="toggleEdit">Modo edición: OFF</button>
+</div>
+
+<div class="controls">
+  <button id="exportSvg">Exportar SVG</button>
+  <button id="exportPositions">Exportar posiciones JSON</button>
+  <button id="resetPositions">Reset posiciones</button>
+</div>
+
+<svg id="stage" viewBox="0 0 1100 560" aria-label="Editor de bandoneón"></svg>
+<div id="help" style="color:#9aa0a6; font-size:12px; margin-top:8px">
+  Tip: en <b>Modo edición</b>, arrastrá los círculos para reubicar. Se guardan en memoria mientras tengas la pestaña abierta; usá “Exportar posiciones JSON” para persistirlas.
+</div>
+
+<script>
+const svg = document.getElementById('stage');
+const fileInput = document.getElementById('file');
+const statusEl = document.getElementById('status');
+const sideSel = document.getElementById('side');
+const bellowsSel = document.getElementById('bellows');
+const chordInput = document.getElementById('chord');
+const applyBtn = document.getElementById('apply');
+const clearBtn = document.getElementById('clear');
+const toggleEditBtn = document.getElementById('toggleEdit');
+const exportSvgBtn = document.getElementById('exportSvg');
+const exportPosBtn = document.getElementById('exportPositions');
+const resetPosBtn  = document.getElementById('resetPositions');
+
+let data = null;                       // { right:[], left:[] }
+let nodes = [];                        // referencias de nodos renderizados
+let editing = false;
+const PADX = 40, PADY = 40;            // offset general
+const gapX = 60, gapY = 70;            // separación base
+const radius = 18;
+// posiciones manuales por lado: key = `${side}:${col},${row}` -> {x,y}
+const positions = new Map();
+
+fileInput.onchange = async () => {
+  const f = fileInput.files[0]; if (!f) return;
+  const text = await f.text();
+  try {
+    data = JSON.parse(text);
+    statusEl.textContent = `Cargado: ${f.name} ✓`;
+    render();
+  } catch (e) {
+    statusEl.textContent = `Error leyendo JSON: ${e.message}`;
+  }
+};
+
+sideSel.onchange = render;
+bellowsSel.onchange = () => { updateLabels(); highlightChord(); };
+applyBtn.onclick = () => highlightChord();
+clearBtn.onclick = () => { chordInput.value=''; highlightChord(); };
+toggleEditBtn.onclick = () => {
+  editing = !editing;
+  toggleEditBtn.textContent = `Modo edición: ${editing ? 'ON' : 'OFF'}`;
+  svg.classList.toggle('edit-on', editing);
+};
+exportSvgBtn.onclick = exportSVG;
+exportPosBtn.onclick = exportPositions;
+resetPosBtn.onclick = () => { positions.clear(); render(); };
+
+function render(){
+  if (!data) { svg.innerHTML=''; return; }
+  svg.innerHTML = '';
+  nodes = [];
+
+  const side = sideSel.value;
+  const buttons = data[side] || [];
+  if (!buttons.length) return;
+
+  // para ejes de referencia
+  const cols = [...new Set(buttons.map(b => b.col))].sort((a,b)=>a-b);
+  const rows = [...new Set(buttons.map(b => b.row))].sort((a,b)=>a-b);
+  const maxRow = Math.max(...rows);
+
+  // grupo de ejes
+  const axes = createSvg('g', { class:'axes' });
+  // columnas arriba
+  for (const c of cols) {
+    const ix = c - 1;
+    const x = PADX + ix * gapX;
+    axes.appendChild(line(x, 20, x, 540, '#1f2433'));
+    const t = createSvg('text', { x, y: 16, 'text-anchor':'middle' }); t.textContent = `C${c}`;
+    axes.appendChild(t);
+  }
+  // filas derecha
+  for (const r of rows) {
+    const y = PADY + ((maxRow - r) * gapY);
+    axes.appendChild(line(20, y, 1080, y, '#1f2433'));
+    const t = createSvg('text', { x: 1086, y: y+3 }); t.textContent = `R${r}`;
+    axes.appendChild(t);
+  }
+  svg.appendChild(axes);
+
+  // dibujar botones
+  for (const b of buttons) {
+    const k = posKey(side, b.col, b.row);
+    const baseX = PADX + (b.col - 1) * gapX;
+    const baseY = PADY + ((maxRow - b.row) * gapY);
+
+    // posición actual (manual si existe, sino base)
+    const p = positions.get(k) || { x: baseX, y: baseY };
+
+    const g = createSvg('g', { class:'key', transform:`translate(${p.x},${p.y})`,
+                               'data-col':b.col, 'data-row':b.row });
+    const c = createSvg('circle', { class:'circle', r:radius, cx:0, cy:0 });
+    const t = createSvg('text', { class:'label', x:0, y:0 });
+    t.textContent = bellowsSel.value === 'open' ? b.openNote : b.closeNote;
+
+    g.appendChild(c); g.appendChild(t); svg.appendChild(g);
+    nodes.push({ g, circle:c, text:t, data:b });
+
+    // drag
+    enableDrag(g, (dx,dy,evt)=>{
+      if (!editing) return;
+      const pt = clientToSvg(evt.clientX, evt.clientY);
+      positions.set(k, { x: pt.x, y: pt.y });
+      g.setAttribute('transform', `translate(${pt.x},${pt.y})`);
+    });
+    // info al click (fuera de edición)
+    g.addEventListener('click', (ev)=>{
+      if (editing) return;
+      alert(`col ${b.col}, row ${b.row}\nopen: ${b.openNote}\nclose: ${b.closeNote}`);
+      ev.stopPropagation();
+    });
+  }
+
+  updateLabels();
+  highlightChord();
+}
+
+function updateLabels(){
+  const open = (bellowsSel.value === 'open');
+  for (const n of nodes) n.text.textContent = open ? n.data.openNote : n.data.closeNote;
+}
+
+function highlightChord(){
+  const raw = chordInput.value.trim();
+  const set = new Set(raw ? raw.split(/\s*,\s*/).map(s=>s.toUpperCase()) : []);
+  const open = (bellowsSel.value === 'open');
+  for (const n of nodes) {
+    const note = open ? n.data.openNote : n.data.closeNote;
+    n.g.classList.toggle('highlight', set.size && set.has(note.toUpperCase()));
+  }
+}
+
+function exportSVG(){
+  // clonar SVG actual y limpiar listeners
+  const clone = svg.cloneNode(true);
+  // preparar documento independiente
+  const svgText = `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    new XMLSerializer().serializeToString(clone);
+  downloadText(svgText, `bandoneon_${sideSel.value}_${bellowsSel.value}.svg`, 'image/svg+xml');
+}
+
+function exportPositions(){
+  const obj = {};
+  for (const [k,v] of positions) obj[k] = v;
+  downloadText(JSON.stringify(obj, null, 2), 'bandoneon_positions.json', 'application/json');
+}
+
+function downloadText(text, name, mime){
+  const blob = new Blob([text], {type:mime});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function posKey(side,col,row){ return `${side}:${col},${row}` }
+
+function createSvg(tag, attrs={}){
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k,v] of Object.entries(attrs)) el.setAttribute(k,v);
+  return el;
+}
+function line(x1,y1,x2,y2,stroke='#334155'){
+  return createSvg('line', { x1, y1, x2, y2, stroke, 'stroke-width':1 });
+}
+function clientToSvg(cx,cy){
+  const pt = svg.createSVGPoint(); pt.x = cx; pt.y = cy;
+  const m = svg.getScreenCTM().inverse();
+  return pt.matrixTransform(m);
+}
+
+// Drag simple para SVG
+function enableDrag(el, ondrag){
+  let dragging = false;
+  function move(e){ if (!dragging) return; ondrag(0,0,e); }
+  el.addEventListener('mousedown', e=>{ dragging = true; e.preventDefault(); });
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', ()=> dragging = false);
+}
+</script>

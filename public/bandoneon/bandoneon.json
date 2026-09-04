@@ -1,0 +1,432 @@
+{
+  "right": [
+    {
+      "col": 1,
+      "row": 2,
+      "openNote": "A3",
+      "closeNote": "A3"
+    },
+    {
+      "col": 2,
+      "row": 1,
+      "openNote": "A#3",
+      "closeNote": "A#3"
+    },
+    {
+      "col": 2,
+      "row": 3,
+      "openNote": "B3",
+      "closeNote": "B3"
+    },
+    {
+      "col": 3,
+      "row": 2,
+      "openNote": "F4",
+      "closeNote": "F4"
+    },
+    {
+      "col": 3,
+      "row": 4,
+      "openNote": "C4",
+      "closeNote": "D4"
+    },
+    {
+      "col": 4,
+      "row": 1,
+      "openNote": "D#4",
+      "closeNote": "D#4"
+    },
+    {
+      "col": 4,
+      "row": 3,
+      "openNote": "E4",
+      "closeNote": "F#4"
+    },
+    {
+      "col": 4,
+      "row": 5,
+      "openNote": "C#4",
+      "closeNote": "C4"
+    },
+    {
+      "col": 5,
+      "row": 2,
+      "openNote": "A#4",
+      "closeNote": "E4"
+    },
+    {
+      "col": 5,
+      "row": 4,
+      "openNote": "D4",
+      "closeNote": "C#4"
+    },
+    {
+      "col": 5,
+      "row": 6,
+      "openNote": "B6",
+      "closeNote": "A6"
+    },
+    {
+      "col": 6,
+      "row": 1,
+      "openNote": "F5",
+      "closeNote": "F5"
+    },
+    {
+      "col": 6,
+      "row": 3,
+      "openNote": "C#5",
+      "closeNote": "F#5"
+    },
+    {
+      "col": 6,
+      "row": 5,
+      "openNote": "A6",
+      "closeNote": "G6"
+    },
+    {
+      "col": 7,
+      "row": 2,
+      "openNote": "G#4",
+      "closeNote": "A4"
+    },
+    {
+      "col": 7,
+      "row": 4,
+      "openNote": "G4",
+      "closeNote": "G#4"
+    },
+    {
+      "col": 7,
+      "row": 6,
+      "openNote": "G#6",
+      "closeNote": "G#6"
+    },
+    {
+      "col": 8,
+      "row": 1,
+      "openNote": "D#5",
+      "closeNote": "E5"
+    },
+    {
+      "col": 8,
+      "row": 3,
+      "openNote": "F#4",
+      "closeNote": "G4"
+    },
+    {
+      "col": 8,
+      "row": 5,
+      "openNote": "F#6",
+      "closeNote": "A#5"
+    },
+    {
+      "col": 9,
+      "row": 2,
+      "openNote": "B4",
+      "closeNote": "C#5"
+    },
+    {
+      "col": 9,
+      "row": 4,
+      "openNote": "A#5",
+      "closeNote": "A#4"
+    },
+    {
+      "col": 9,
+      "row": 6,
+      "openNote": "G6",
+      "closeNote": "F#6"
+    },
+    {
+      "col": 10,
+      "row": 1,
+      "openNote": "F#5",
+      "closeNote": "G#5"
+    },
+    {
+      "col": 10,
+      "row": 3,
+      "openNote": "A4",
+      "closeNote": "B4"
+    },
+    {
+      "col": 10,
+      "row": 5,
+      "openNote": "E6",
+      "closeNote": "C6"
+    },
+    {
+      "col": 11,
+      "row": 2,
+      "openNote": "D5",
+      "closeNote": "E5"
+    },
+    {
+      "col": 11,
+      "row": 4,
+      "openNote": "C6",
+      "closeNote": "C5"
+    },
+    {
+      "col": 11,
+      "row": 6,
+      "openNote": "F6",
+      "closeNote": "F6"
+    },
+    {
+      "col": 12,
+      "row": 1,
+      "openNote": "A5",
+      "closeNote": "B5"
+    },
+    {
+      "col": 12,
+      "row": 3,
+      "openNote": "C5",
+      "closeNote": "D5"
+    },
+    {
+      "col": 12,
+      "row": 5,
+      "openNote": "D#6",
+      "closeNote": "D#6"
+    },
+    {
+      "col": 13,
+      "row": 2,
+      "openNote": "G#5",
+      "closeNote": "A5"
+    },
+    {
+      "col": 13,
+      "row": 4,
+      "openNote": "D6",
+      "closeNote": "D6"
+    },
+    {
+      "col": 14,
+      "row": 1,
+      "openNote": "C#6",
+      "closeNote": "E6"
+    },
+    {
+      "col": 14,
+      "row": 3,
+      "openNote": "E5",
+      "closeNote": "G5"
+    },
+    {
+      "col": 15,
+      "row": 2,
+      "openNote": "B5",
+      "closeNote": "C#6"
+    },
+    {
+      "col": 16,
+      "row": 1,
+      "openNote": "G5",
+      "closeNote": "D#5"
+    }
+  ],
+  "left": [
+    {
+      "col": 1,
+      "row": 1,
+      "openNote": "D2",
+      "closeNote": "E2"
+    },
+    {
+      "col": 2,
+      "row": 2,
+      "openNote": "E3",
+      "closeNote": "A2"
+    },
+    {
+      "col": 2,
+      "row": 4,
+      "openNote": "E2",
+      "closeNote": "D2"
+    },
+    {
+      "col": 3,
+      "row": 1,
+      "openNote": "B2",
+      "closeNote": "E3"
+    },
+    {
+      "col": 3,
+      "row": 3,
+      "openNote": "D3",
+      "closeNote": "G2"
+    },
+    {
+      "col": 4,
+      "row": 2,
+      "openNote": "G#3",
+      "closeNote": "E3"
+    },
+    {
+      "col": 4,
+      "row": 4,
+      "openNote": "A2",
+      "closeNote": "D3"
+    },
+    {
+      "col": 5,
+      "row": 1,
+      "openNote": "G4",
+      "closeNote": "F#4"
+    },
+    {
+      "col": 5,
+      "row": 3,
+      "openNote": "A3",
+      "closeNote": "G3"
+    },
+    {
+      "col": 5,
+      "row": 5,
+      "openNote": "G#2",
+      "closeNote": "G#2"
+    },
+    {
+      "col": 6,
+      "row": 2,
+      "openNote": "B3",
+      "closeNote": "A3"
+    },
+    {
+      "col": 6,
+      "row": 4,
+      "openNote": "G3",
+      "closeNote": "A#3"
+    },
+    {
+      "col": 7,
+      "row": 1,
+      "openNote": "A4",
+      "closeNote": "G#4"
+    },
+    {
+      "col": 7,
+      "row": 3,
+      "openNote": "C4",
+      "closeNote": "B3"
+    },
+    {
+      "col": 7,
+      "row": 5,
+      "openNote": "A#2",
+      "closeNote": "A#2"
+    },
+    {
+      "col": 8,
+      "row": 2,
+      "openNote": "D4",
+      "closeNote": "C#4"
+    },
+    {
+      "col": 8,
+      "row": 4,
+      "openNote": "D#3",
+      "closeNote": "C4"
+    },
+    {
+      "col": 9,
+      "row": 1,
+      "openNote": "D#4",
+      "closeNote": "B4"
+    },
+    {
+      "col": 9,
+      "row": 3,
+      "openNote": "E4",
+      "closeNote": "D4"
+    },
+    {
+      "col": 9,
+      "row": 5,
+      "openNote": "C#3",
+      "closeNote": "D#3"
+    },
+    {
+      "col": 10,
+      "row": 2,
+      "openNote": "F#4",
+      "closeNote": "E4"
+    },
+    {
+      "col": 10,
+      "row": 4,
+      "openNote": "F4",
+      "closeNote": "C#3"
+    },
+    {
+      "col": 11,
+      "row": 1,
+      "openNote": "F#3",
+      "closeNote": "F3"
+    },
+    {
+      "col": 11,
+      "row": 3,
+      "openNote": "C3",
+      "closeNote": "F4"
+    },
+    {
+      "col": 11,
+      "row": 5,
+      "openNote": "F3",
+      "closeNote": "D#4"
+    },
+    {
+      "col": 12,
+      "row": 2,
+      "openNote": "C#4",
+      "closeNote": "G#3"
+    },
+    {
+      "col": 12,
+      "row": 4,
+      "openNote": "A#3",
+      "closeNote": "C3"
+    },
+    {
+      "col": 13,
+      "row": 1,
+      "openNote": "D#2",
+      "closeNote": "C#2"
+    },
+    {
+      "col": 13,
+      "row": 3,
+      "openNote": "G2",
+      "closeNote": "F#3"
+    },
+    {
+      "col": 13,
+      "row": 5,
+      "openNote": "G#4",
+      "closeNote": "G4"
+    },
+    {
+      "col": 14,
+      "row": 2,
+      "openNote": "F#2",
+      "closeNote": "B2"
+    },
+    {
+      "col": 14,
+      "row": 4,
+      "openNote": "F2",
+      "closeNote": "F#2"
+    },
+    {
+      "col": 15,
+      "row": 1,
+      "openNote": "C2",
+      "closeNote": "F2"
+    }
+  ]
+}
