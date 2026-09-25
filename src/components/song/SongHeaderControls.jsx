@@ -9,6 +9,7 @@ import {
   Sparkles,
   Crown,
   Youtube,
+  Edit3,
 } from 'lucide-react';
 import { transposeChord } from '../../utils/music';
 
@@ -16,6 +17,7 @@ import { transposeChord } from '../../utils/music';
  * SongHeaderControls Component
  * Fixed-dimension utility bar:
  * - Back button / Exit stage
+ * - Edit custom version (Pro feature ✏️)
  * - Toggle favorite (⭐)
  * - Add to setlist popover
  * - Transpose controls (+/-) (Fixed width, zero layout shift)
@@ -33,13 +35,26 @@ export default function SongHeaderControls({
   transpose = 0,
   onTranspose,
   isPitchShiftActive = false,
+  isLoadingAudio = false,
   isPremium = false,
   openUpgradeModal = null,
   isVideoPaperOpen = true,
   onOpenVideoPaper = null,
   onFeedbackToast = null,
+  isEditMode = false,
+  onToggleEditMode = null,
 }) {
   const [isAddToSetlistOpen, setIsAddToSetlistOpen] = useState(false);
+
+  const handleEditClick = () => {
+    if (!isPremium) {
+      if (openUpgradeModal) openUpgradeModal();
+      return;
+    }
+    if (onToggleEditMode) {
+      onToggleEditMode();
+    }
+  };
 
   const handleSelectSetlistToAdd = (setlistName) => {
     if (onAddSongToSetlist) {
@@ -65,6 +80,22 @@ export default function SongHeaderControls({
         </button>
 
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          {/* Edit Custom Arrangement Button (Pro Feature) */}
+          <button
+            type="button"
+            onClick={handleEditClick}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold font-sans transition-all cursor-pointer shadow-sm ${
+              isEditMode
+                ? 'bg-amber-600 border-amber-700 text-white hover:bg-amber-700'
+                : 'bg-white hover:bg-stone-50 border-stone-300 text-stone-700'
+            }`}
+            title={isEditMode ? 'Cerrar Modo Edición' : 'Editar letra, compases y crear tu versión personal (Pro)'}
+          >
+            <Edit3 className={`w-3.5 h-3.5 ${isEditMode ? 'text-white' : 'text-amber-700'}`} />
+            <span>{isEditMode ? 'Editando' : 'Editar'}</span>
+            {!isPremium && <Crown className="w-3 h-3 text-amber-500 fill-amber-400" />}
+          </button>
+
           {/* Favorite Toggle Button */}
           {onToggleFavorite && (
             <button
@@ -152,6 +183,7 @@ export default function SongHeaderControls({
             <span className="font-semibold text-stone-600 hidden sm:inline">Transponer:</span>
             <button
               type="button"
+              disabled={isLoadingAudio}
               onClick={async () => {
                 try {
                   if (Tone.context.state !== 'running') {
@@ -161,16 +193,21 @@ export default function SongHeaderControls({
                 } catch (e) {}
                 onTranspose(-1);
               }}
-              className="w-6 h-6 rounded-lg bg-stone-100 hover:bg-stone-200 font-mono font-bold flex items-center justify-center text-stone-800 cursor-pointer transition-colors"
-              title="Bajar 1 semitono"
+              className={`w-6 h-6 rounded-lg font-mono font-bold flex items-center justify-center text-stone-800 transition-colors ${
+                isLoadingAudio
+                  ? 'bg-stone-100 opacity-40 cursor-not-allowed'
+                  : 'bg-stone-100 hover:bg-stone-200 cursor-pointer'
+              }`}
+              title={isLoadingAudio ? 'Cargando audio...' : 'Bajar 1 semitono'}
             >
               -
             </button>
-            <span className="font-mono font-bold text-amber-900 min-w-[28px] text-center">
-              {transpose > 0 ? `+${transpose}` : transpose}
+            <span className={`font-mono font-bold min-w-[28px] text-center ${isLoadingAudio ? 'text-stone-400' : 'text-amber-900'}`}>
+              {isLoadingAudio ? '…' : (transpose > 0 ? `+${transpose}` : transpose)}
             </span>
             <button
               type="button"
+              disabled={isLoadingAudio}
               onClick={async () => {
                 try {
                   if (Tone.context.state !== 'running') {
@@ -180,8 +217,12 @@ export default function SongHeaderControls({
                 } catch (e) {}
                 onTranspose(1);
               }}
-              className="w-6 h-6 rounded-lg bg-stone-100 hover:bg-stone-200 font-mono font-bold flex items-center justify-center text-stone-800 cursor-pointer transition-colors"
-              title="Subir 1 semitono"
+              className={`w-6 h-6 rounded-lg font-mono font-bold flex items-center justify-center text-stone-800 transition-colors ${
+                isLoadingAudio
+                  ? 'bg-stone-100 opacity-40 cursor-not-allowed'
+                  : 'bg-stone-100 hover:bg-stone-200 cursor-pointer'
+              }`}
+              title={isLoadingAudio ? 'Cargando audio...' : 'Subir 1 semitono'}
             >
               +
             </button>
@@ -203,13 +244,19 @@ export default function SongHeaderControls({
 
       {/* Song Title & Metadata */}
       <div className="mb-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           <h2 className="text-2xl sm:text-3xl font-serif font-black text-stone-900 tracking-tight">
             {song.title}
           </h2>
           <span className="font-mono text-xs font-bold text-amber-950 bg-amber-200/90 px-2.5 py-0.5 rounded-md border border-amber-300 shadow-sm">
             Tono: {transposeChord(song.key || 'C', transpose)}
           </span>
+          {song.isCustom && (
+            <span className="font-mono text-[11px] font-bold text-amber-950 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-md flex items-center gap-1 shadow-xs">
+              <Sparkles className="w-3 h-3 text-amber-700" />
+              <span>Arreglo Personal</span>
+            </span>
+          )}
         </div>
         <p className="text-xs sm:text-sm font-sans text-stone-600 mt-0.5">
           {song.artist} {song.composer ? `• ${song.composer}` : ''}

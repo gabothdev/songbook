@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import * as Tone from 'tone';
-import { Youtube, X, Minimize2, Maximize2, Move } from 'lucide-react';
+import { Youtube, X, Minimize2, Maximize2, Move, Search, Link as LinkIcon, Sparkles } from 'lucide-react';
 
 /**
  * Floating / Pinned Paper Scrap containing the synchronized YouTube Player.
@@ -17,12 +17,14 @@ export default function FloatingVideoPaper({
   onTimeUpdate,
   onStateChange,
   onPlayerReady,
+  onOpenVideoPicker = null,
 }) {
   const [isMinimized, setIsMinimized] = useState(false);
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const intervalRef = useRef(null);
   const playerIdRef = useRef(`yt_player_${Math.random().toString(36).substring(2, 9)}`);
+  const dragConstraintsRef = useRef(null);
 
   // Handle muting state when pitch shift is active
   useEffect(() => {
@@ -48,9 +50,11 @@ export default function FloatingVideoPaper({
     }
   }, []);
 
-  // Initialize or re-create YouTube Player when youtubeId changes
+  // Initialize or re-create YouTube Player only when youtubeId or visibility changes
+  // NOTE: isMinimized is intentionally NOT a dependency — we never destroy the player on minimize.
+  // The player container is kept in the DOM and hidden via CSS when minimized.
   useEffect(() => {
-    if (!youtubeId || !isVisible || isMinimized) return;
+    if (!youtubeId || !isVisible) return;
 
     let destroyed = false;
 
@@ -134,29 +138,35 @@ export default function FloatingVideoPaper({
         playerRef.current = null;
       }
     };
-  }, [youtubeId, isVisible, isMinimized]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [youtubeId, isVisible]);
 
-  if (!isVisible || !youtubeId) return null;
+  if (!isVisible) return null;
 
   return (
-    <motion.div
-      drag
-      dragMomentum={false}
-      dragElastic={0.08}
-      initial={{ opacity: 0, scale: 0.9, y: 30, rotate: 2 }}
-      animate={{ opacity: 1, scale: 1, y: 0, rotate: isMinimized ? 0 : 1.5 }}
-      exit={{ opacity: 0, scale: 0.85, y: 20 }}
-      whileDrag={{ scale: 1.03, cursor: 'grabbing', zIndex: 60 }}
-      onPointerDown={() => {
-        try {
-          if (Tone.context.state !== 'running') {
-            Tone.start().then(() => Tone.context.resume());
-          }
-        } catch (e) {}
-      }}
-      className="fixed bottom-5 right-5 sm:bottom-8 sm:right-8 z-50 select-none cursor-grab"
-      style={{ touchAction: 'none' }}
-    >
+    <>
+      {/* Invisible full-screen div used as drag constraint boundary */}
+      <div ref={dragConstraintsRef} className="fixed inset-0 pointer-events-none z-40" />
+
+      <motion.div
+        drag
+        dragMomentum={false}
+        dragElastic={0.08}
+        dragConstraints={dragConstraintsRef}
+        initial={{ opacity: 0, scale: 0.9, y: 30, rotate: 2 }}
+        animate={{ opacity: 1, scale: 1, y: 0, rotate: isMinimized ? 0 : 1.5 }}
+        exit={{ opacity: 0, scale: 0.85, y: 20 }}
+        whileDrag={{ scale: 1.03, cursor: 'grabbing', zIndex: 60 }}
+        onPointerDown={() => {
+          try {
+            if (Tone.context.state !== 'running') {
+              Tone.start().then(() => Tone.context.resume());
+            }
+          } catch (e) {}
+        }}
+        className="fixed bottom-5 right-5 sm:bottom-8 sm:right-8 z-50 select-none cursor-grab"
+        style={{ touchAction: 'none' }}
+      >
       {/* Paper Container */}
       <div className="relative w-[320px] sm:w-[380px] md:w-[420px] filter drop-shadow-[0_20px_30px_rgba(0,0,0,0.45)]">
         {/* Background Paper SVG */}
@@ -178,17 +188,33 @@ export default function FloatingVideoPaper({
             </div>
 
             <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsMinimized(!isMinimized);
-                }}
-                className="p-1 rounded-md hover:bg-stone-200/80 text-stone-600 transition-colors cursor-pointer"
-                title={isMinimized ? 'Expandir video' : 'Minimizar'}
-              >
-                {isMinimized ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
-              </button>
+              {onOpenVideoPicker && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenVideoPicker();
+                  }}
+                  className="p-1 rounded-md hover:bg-stone-200/80 text-stone-600 transition-colors cursor-pointer"
+                  title="Cambiar o buscar video de YouTube"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {youtubeId && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsMinimized(!isMinimized);
+                  }}
+                  className="p-1 rounded-md hover:bg-stone-200/80 text-stone-600 transition-colors cursor-pointer"
+                  title={isMinimized ? 'Expandir video' : 'Minimizar'}
+                >
+                  {isMinimized ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
+                </button>
+              )}
 
               {onClose && (
                 <button
@@ -198,7 +224,7 @@ export default function FloatingVideoPaper({
                     onClose();
                   }}
                   className="p-1 rounded-md hover:bg-stone-200/80 text-stone-600 transition-colors cursor-pointer"
-                  title="Cerrar video"
+                  title="Cerrar reproductor"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -206,17 +232,49 @@ export default function FloatingVideoPaper({
             </div>
           </div>
 
-          {/* Video container element */}
-          {!isMinimized ? (
-            <div className="w-full aspect-video rounded-xl overflow-hidden shadow-md bg-black border border-stone-300 relative z-10">
-              <div id={playerIdRef.current} className="w-full h-full" />
-            </div>
+          {/* Video or Link Prompt container element */}
+          {youtubeId ? (
+            <>
+              {/* Player always stays in the DOM to avoid destroying/recreating the iframe.
+                  When minimized, it's hidden with CSS and a compact badge is shown. */}
+              <div
+                className="w-full aspect-video rounded-xl overflow-hidden shadow-md bg-black border border-stone-300 relative z-10"
+                style={{ display: isMinimized ? 'none' : 'block' }}
+              >
+                <div id={playerIdRef.current} className="w-full h-full" />
+              </div>
+
+              {isMinimized && (
+                <div className="py-3 px-3 bg-white/90 rounded-xl border border-stone-300 flex items-center justify-between text-xs font-sans text-stone-700 shadow-sm">
+                  <span className="truncate font-medium">{songArtist}</span>
+                  <span className="text-[10px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded">
+                    Video en segundo plano
+                  </span>
+                </div>
+              )}
+            </>
           ) : (
-            <div className="py-3 px-3 bg-white/90 rounded-xl border border-stone-300 flex items-center justify-between text-xs font-sans text-stone-700 shadow-sm">
-              <span className="truncate font-medium">{songArtist}</span>
-              <span className="text-[10px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded">
-                Video en segundo plano
-              </span>
+            <div className="w-full aspect-video rounded-xl bg-amber-50/70 border-2 border-dashed border-amber-400/80 flex flex-col items-center justify-center p-4 text-center space-y-2 relative z-10 shadow-inner">
+              <Sparkles className="w-6 h-6 text-amber-600 animate-pulse" />
+              <div className="text-xs font-serif font-bold text-stone-900">
+                Sin video vinculado
+              </div>
+              <p className="text-[11px] font-sans text-stone-600 max-w-[200px] leading-tight">
+                Vincula un video de YouTube para reproducir y sincronizar compases.
+              </p>
+              {onOpenVideoPicker && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenVideoPicker();
+                  }}
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold font-sans shadow transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Buscar en YouTube</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -225,10 +283,13 @@ export default function FloatingVideoPaper({
             <span className="flex items-center gap-1">
               <Move className="w-2.5 h-2.5" /> Arrastra para mover
             </span>
-            <span className="font-serif italic font-bold text-stone-700">Video Sincronizado</span>
+            <span className="font-serif italic font-bold text-stone-700">
+              {youtubeId ? 'Video Sincronizado' : 'Modo Libre'}
+            </span>
           </div>
         </div>
       </div>
     </motion.div>
+    </>
   );
 }

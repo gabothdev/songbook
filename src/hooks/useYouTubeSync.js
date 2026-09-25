@@ -280,3 +280,5 @@ export function useYouTubeSync({
     jumpToBeat,
   };
 }
+
+export default useYouTubeSync;

@@ -17,21 +17,35 @@ router.get('/songs', async (req, res) => {
     }
 });
 
-// Guardar canción
+// Guardar o actualizar versión personalizada de canción
 router.post('/songs', async (req, res) => {
-    const { title, artist, content, youtubeId, syncData, transpose, chordVariants } = req.body;
+    const { id, title, artist, content, youtubeId, syncData, transpose, chordVariants, originalContent, isCustom } = req.body;
     try {
         const chordVariantsStr = typeof chordVariants === 'object' && chordVariants !== null ? JSON.stringify(chordVariants) : chordVariants;
+        
+        let existingSong = null;
+        if (id) {
+            existingSong = await prisma.song.findUnique({ where: { id } });
+        }
+        if (!existingSong && title && artist) {
+            existingSong = await prisma.song.findFirst({ where: { title, artist } });
+        }
+
+        // Si es una versión personalizada y aún no hay originalContent guardado, respaldamos el content previo
+        const backupOriginalContent = existingSong?.originalContent || (isCustom ? existingSong?.content : null) || originalContent;
+
         const song = await prisma.song.upsert({
-            where: { id: req.body.id || 'new_dummy_id' },
+            where: { id: existingSong?.id || id || 'new_dummy_id' },
             update: {
-                title,
-                artist,
-                content,
-                youtubeId,
-                syncData,
+                ...(title ? { title } : {}),
+                ...(artist ? { artist } : {}),
+                ...(content !== undefined ? { content } : {}),
+                ...(youtubeId !== undefined ? { youtubeId } : {}),
+                ...(syncData !== undefined ? { syncData } : {}),
                 ...(transpose !== undefined ? { transpose: parseInt(transpose, 10) || 0 } : {}),
-                ...(chordVariantsStr !== undefined ? { chordVariants: chordVariantsStr } : {})
+                ...(chordVariantsStr !== undefined ? { chordVariants: chordVariantsStr } : {}),
+                ...(backupOriginalContent ? { originalContent: backupOriginalContent } : {}),
+                ...(isCustom !== undefined ? { isCustom: Boolean(isCustom) } : {})
             },
             create: {
                 title,
@@ -40,10 +54,46 @@ router.post('/songs', async (req, res) => {
                 youtubeId,
                 syncData,
                 transpose: parseInt(transpose, 10) || 0,
-                chordVariants: chordVariantsStr || null
+                chordVariants: chordVariantsStr || null,
+                originalContent: backupOriginalContent || null,
+                isCustom: Boolean(isCustom)
             }
         });
         res.json(song);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Restaurar versión original de la canción (revertir cambios personalizados)
+router.post('/songs/restore-original', async (req, res) => {
+    const { id, title, artist } = req.body;
+    try {
+        let song = null;
+        if (id) {
+            song = await prisma.song.findUnique({ where: { id } });
+        }
+        if (!song && title && artist) {
+            song = await prisma.song.findFirst({ where: { title, artist } });
+        }
+
+        if (!song) {
+            return res.status(404).json({ error: 'Canción no encontrada' });
+        }
+
+        if (!song.originalContent) {
+            return res.json({ message: 'La canción ya se encuentra en su versión original', song });
+        }
+
+        const restored = await prisma.song.update({
+            where: { id: song.id },
+            data: {
+                content: song.originalContent,
+                isCustom: false
+            }
+        });
+
+        res.json({ message: 'Canción restaurada exitosamente a la versión original', song: restored });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

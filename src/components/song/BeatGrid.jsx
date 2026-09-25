@@ -14,8 +14,14 @@ export default function BeatGrid({
   onBeatClick = null,
   mode = 'ribbon', // 'ribbon' | 'grid'
   transpose = 0,
+  isEditMode = false,
+  onUpdateChord = null,
+  onAddMeasure = null,
+  onSetTimestamp = null,
+  currentTime = null,
 }) {
   const activeCellRef = useRef(null);
+  const ribbonScrollRef = useRef(null);
 
   const flatChords = useMemo(() => {
     return compases.flatMap((m) => m.acordes);
@@ -31,14 +37,13 @@ export default function BeatGrid({
     });
   }, [compases, beatsPerMeasure]);
 
-  // Auto-scroll the horizontal ribbon to keep the active beat centered
+  // Auto-scroll the horizontal ribbon to keep the active beat centered using localized scroll
   useEffect(() => {
-    if (mode === 'ribbon' && activeCellRef.current) {
-      activeCellRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'nearest',
-        inline: 'center',
-      });
+    if (mode === 'ribbon' && activeCellRef.current && ribbonScrollRef.current) {
+      const container = ribbonScrollRef.current;
+      const cell = activeCellRef.current;
+      const targetScrollLeft = cell.offsetLeft - container.offsetWidth / 2 + cell.offsetWidth / 2;
+      container.scrollTo({ left: Math.max(0, targetScrollLeft), behavior: 'smooth' });
     }
   }, [currentBeatIndex, mode]);
 
@@ -94,7 +99,7 @@ export default function BeatGrid({
   /**
    * Renders a single beat cell (time 1, 2, 3, or 4)
    */
-  const renderBeatCell = (chord, beatNum, cellGlobalIndex, isRibbon = false) => {
+  const renderBeatCell = (chord, beatNum, cellGlobalIndex, isRibbon = false, measure = null) => {
     const isActive = cellGlobalIndex === currentBeatIndex;
     const isRest = chord === '𝄾' || chord === '𝄽' || !chord;
 
@@ -106,14 +111,32 @@ export default function BeatGrid({
       chord === flatChords[cellGlobalIndex - 1];
 
     const displayChord = isDuplicate ? '' : chord;
+    const isDraggable = isEditMode && displayChord && !isRest;
+
+    const handleDragStart = (e) => {
+      if (!isDraggable) return;
+      e.stopPropagation();
+      e.dataTransfer.effectAllowed = 'copy';
+      const payload = {
+        chord: displayChord,
+        beatIndex: cellGlobalIndex,
+        secTime: measure?.secTime ?? null,
+        seccion: measure?.seccion ?? '',
+      };
+      e.dataTransfer.setData('application/json', JSON.stringify(payload));
+      e.dataTransfer.setData('text/plain', displayChord);
+    };
 
     return (
       <div
         key={cellGlobalIndex}
         ref={isActive ? activeCellRef : null}
+        draggable={isDraggable}
+        onDragStart={handleDragStart}
         onClick={() => onBeatClick && onBeatClick(chord, cellGlobalIndex)}
         className={`
-          relative flex-1 flex flex-col items-center justify-center cursor-pointer transition-all select-none
+          relative flex-1 flex flex-col items-center justify-center transition-all select-none
+          ${isDraggable ? 'cursor-grab active:cursor-grabbing hover:ring-2 hover:ring-amber-400' : 'cursor-pointer'}
           ${isRibbon ? 'h-14 sm:h-16 px-1' : 'aspect-square p-1 rounded-lg'}
           ${
             isActive
@@ -125,6 +148,7 @@ export default function BeatGrid({
               : 'bg-stone-100/70 hover:bg-stone-200/60 text-stone-400 border border-dashed border-stone-200'
           }
         `}
+        title={isDraggable ? `Arrastra [${displayChord}] hacia la letra en la página izquierda` : undefined}
       >
         {/* Chord Symbol or Subtle Pulse Dot */}
         {displayChord ? (
@@ -211,7 +235,7 @@ export default function BeatGrid({
         <div className="flex divide-x divide-stone-200/80 bg-[#fcfaf6]">
           {compas.acordes.map((ch, bIdx) => {
             const globalBeatIdx = startGlobalBeatIndex + bIdx;
-            return renderBeatCell(ch, bIdx + 1, globalBeatIdx, true);
+            return renderBeatCell(ch, bIdx + 1, globalBeatIdx, true, compas);
           })}
         </div>
       </div>
@@ -240,7 +264,7 @@ export default function BeatGrid({
         </div>
 
         {/* Ribbon Track Container */}
-        <div className="w-full bg-[#201813] p-3 rounded-2xl border border-[#3e2c22] shadow-inner overflow-x-auto custom-scrollbar scroll-smooth">
+        <div ref={ribbonScrollRef} className="w-full bg-[#201813] p-3 rounded-2xl border border-[#3e2c22] shadow-inner overflow-x-auto custom-scrollbar scroll-smooth">
           <div className="flex items-center gap-2.5 min-w-max px-2">
             {compases.map((compas, mIdx) => renderRibbonMeasure(compas, mIdx))}
           </div>
@@ -266,9 +290,21 @@ export default function BeatGrid({
               >
                 {sectionName}
               </span>
-              <span className="text-[10px] font-mono text-stone-400 font-semibold">
-                {sectionMeasures.length} compases
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono text-stone-400 font-semibold">
+                  {sectionMeasures.length} compases
+                </span>
+                {isEditMode && onAddMeasure && (
+                  <button
+                    type="button"
+                    onClick={() => onAddMeasure(sectionName)}
+                    className="px-2 py-0.5 bg-white hover:bg-stone-100 text-stone-700 rounded border border-stone-300 text-[10px] font-bold font-sans cursor-pointer shadow-2xs transition-colors"
+                    title="Añadir un compás a esta sección"
+                  >
+                    + Compás
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Measures Grid inside Section */}
@@ -280,16 +316,25 @@ export default function BeatGrid({
                 >
                   <div className="flex items-center justify-between text-[9px] font-mono text-stone-400 px-0.5">
                     <span>Compás {measure.id || measure.globalIndex + 1}</span>
-                    {measure.secTime !== null && measure.secTime !== undefined && (
+                    {measure.secTime !== null && measure.secTime !== undefined ? (
                       <span className="text-amber-800 font-bold">{measure.secTime}s</span>
-                    )}
+                    ) : isEditMode && onSetTimestamp && currentTime !== null ? (
+                      <button
+                        type="button"
+                        onClick={() => onSetTimestamp(measure.globalIndex, currentTime)}
+                        className="text-amber-700 hover:text-amber-900 font-bold text-[9px] underline cursor-pointer"
+                        title="Marcar tiempo actual del video en este compás"
+                      >
+                        ⏱️ Tap
+                      </button>
+                    ) : null}
                   </div>
 
                   <div className="flex items-center gap-1">
                     {measure.acordes.map((chord, bIdx) => {
                       const startBeat = measureBeatOffsets[measure.globalIndex] ?? (measure.globalIndex * beatsPerMeasure);
                       const cellGlobalIndex = startBeat + bIdx;
-                      return renderBeatCell(chord, bIdx + 1, cellGlobalIndex, false);
+                      return renderBeatCell(chord, bIdx + 1, cellGlobalIndex, false, measure);
                     })}
                   </div>
                 </div>

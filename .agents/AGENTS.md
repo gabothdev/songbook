@@ -202,6 +202,16 @@ node prisma/seed-chords.js
 - El primer acorde con letra activa la `Estrofa 1`.
 - Los caracteres espurios (`[']`, `['´]`, `’`) son filtrados en `SongLyricsRenderer.jsx` mediante `IGNORED_CHORD_REGEX` para preservar únicamente acordes reales y símbolos de silencios (`𝄾`, `𝄽`).
 
+### F. Editor Visual de Canciones Pro & Drag-and-Drop
+- **Interacción sin Textarea**: En lugar de requerir que el usuario edite texto plano con corchetes (`[C]`), `SongLyricsVisualEditor.jsx` desglosa la letra en palabras interactivas con ranuras magnéticas superiores (`ChordDropSlot`).
+- **Arrastre desde el BeatGrid**:
+  - `BeatGrid.jsx` convierte las celdas de acordes en elementos arrastrables con payload JSON `{ chord, beatIndex, secTime, seccion }`.
+  - Al soltarlas sobre cualquier palabra de la letra, el acorde se asocia visualmente y hereda el timestamp rítmico si está en modo sincronizado.
+- **Detección Instrumental & Alta de Letra**:
+  - Si una canción no posee versos (es solo acordes o instrumental), el editor muestra un banner destacado con el botón `➕ Añadir Letra` para transcribir los versos y habilitar las ranuras de acordes.
+- **Selector de Videos en Papel Rasgado**:
+  - Si la canción no tiene video enlazado, `FloatingVideoPaper.jsx` muestra el botón `Buscar en YouTube` que abre `YouTubeVideoPickerModal.jsx` para buscar o pegar una URL de YouTube directamente.
+
 ---
 
 ## 7. Reglas de Negocio & Buenas Prácticas
@@ -210,7 +220,7 @@ node prisma/seed-chords.js
    - El estado del frontend sincroniza primero con la base de datos SQLite y mantiene un espejo de respaldo en `localStorage` (`songbook_user_songs`, `songbook_setlists`).
 2. **Niveles de Usuario (AuthContext)**:
    - **FREE**: Hasta 5 canciones, 2 setlists, muestra anuncios con `AdBanner.jsx`. La transposición transpone los acordes visualmente y notifica que el cambio de tono en el audio es una función Pro.
-   - **PREMIUM**: Canciones y setlists ilimitados, sin anuncios, exportación, pitch shifting de audio en tiempo real y sincronización total.
+   - **PREMIUM**: Canciones y setlists ilimitados, sin anuncios, exportación, pitch shifting de audio en tiempo real, edición visual y sincronización total.
 3. **Descarga de Audio Estrictamente On-Demand**:
    - **NUNCA** iniciar descargas de audio de YouTube ni tareas pesadas de ML en el proceso de búsqueda o scraping.
    - La descarga solo se dispara cuando el usuario interactúa activamente con el control de transposición (`transpose !== 0`).
@@ -223,4 +233,5 @@ node prisma/seed-chords.js
 7. **Manipulación de DOM y Animaciones**:
    - Usar `Framer Motion` con `perspective` para transiciones de páginas.
    - No usar `scrollIntoView` global; utilizar scrolls locales dentro de los contenedores de páginas.
+
 

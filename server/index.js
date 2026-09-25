@@ -51,8 +51,8 @@ app.use((req, res) => {
 });
 
 // Iniciar el servidor
-const server = app.listen(PORT, () => {
-  console.log(`> ChordBook Server listo`);
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`> SongBook Server listo`);
   console.log(`> Puerto: ${PORT}`);
   console.log(`> Directorio estático: ${distPath}`);
 });

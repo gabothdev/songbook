@@ -53,7 +53,7 @@ export const INITIAL_SETLISTS = [
  * Manages repertories (setlists), favorites, song catalog, persistence,
  * and live stage navigation context.
  */
-export function useSetlistManager({ onSelectSong = null } = {}) {
+export function useSetlistManager({ onSelectSong = null, onUpdateSelectedSong = null } = {}) {
   const [userSongs, setUserSongs] = useState(() => {
     const saved = localStorage.getItem('songbook_user_songs');
     if (saved) {
@@ -208,8 +208,13 @@ export function useSetlistManager({ onSelectSong = null } = {}) {
       })
     );
 
-    if (selectedSong && (String(selectedSong.id) === String(song.id) || selectedSong.title === song.title)) {
-      setSelectedSong((prev) => (prev ? { ...prev, isFavorite: newFavStatus } : null));
+    // Notify parent to sync currently-open song's favorite status
+    if (onUpdateSelectedSong) {
+      onUpdateSelectedSong((prev) =>
+        prev && (String(prev.id) === String(song.id) || prev.title === song.title)
+          ? { ...prev, isFavorite: newFavStatus }
+          : prev
+      );
     }
 
     try {

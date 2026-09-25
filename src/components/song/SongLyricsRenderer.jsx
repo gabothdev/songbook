@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useEffect } from 'react';
 import { Play, Pause } from 'lucide-react';
-import { transposeTextWithChords, normalizeChordName } from '../../utils/music';
+import { transposeTextWithChords, normalizeChordName, alignChordsWithLyrics } from '../../utils/music';
 
 // Section keywords to recognize section headers accurately
 const SECTION_KEYWORDS = /^(intro|verse|verso|estrofa|prechorus|pre-chorus|precoro|pre-coro|chorus|coro|estribillo|bridge|puente|solo|outro|final|coda|hook|interlude|interludio|part|parte|tema)/i;
@@ -59,7 +59,8 @@ export function parseLineToChordSegments(line) {
  * Parses raw text with [Section @ timestamp] or [Section] headers and metadata into clean structured blocks
  */
 export function parseSongStructure(rawContent, transposeAmount = 0) {
-  const transposed = transposeTextWithChords(rawContent, transposeAmount);
+  const aligned = alignChordsWithLyrics(rawContent || '');
+  const transposed = transposeTextWithChords(aligned, transposeAmount);
   const lines = transposed.split('\n');
 
   let extractedBpm = null;
@@ -99,11 +100,14 @@ export function parseSongStructure(rawContent, transposeAmount = 0) {
       continue;
     }
 
-    // 3. Check for Section Headers: [Intro @ 0.0], [Verse @ 9.1], [Chorus], etc.
-    const bracketHeaderMatch = trimmed.match(/^\[\s*([a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s\-_]+?)(?:\s*@\s*([0-9:.]+))?\s*\]$/);
+    // 3. Check for Section Headers: [Intro @ 0.0], [Verse @ 9.1], [Parte A], [Chorus], etc.
+    const bracketHeaderMatch = trimmed.match(/^\[\s*([a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s\-_/]+?)(?:\s*@\s*([0-9:.]+))?\s*\]$/);
+    const innerHeaderName = bracketHeaderMatch ? bracketHeaderMatch[1].trim() : '';
     const isSectionHeader =
       bracketHeaderMatch &&
-      (bracketHeaderMatch[2] !== undefined || SECTION_KEYWORDS.test(bracketHeaderMatch[1].trim()));
+      (bracketHeaderMatch[2] !== undefined ||
+       SECTION_KEYWORDS.test(innerHeaderName) ||
+       !/^[A-G][b#]?(?:m|maj|min|dim|aug|sus|add|\d|M|\/|[A-G][b#]?)*$/i.test(innerHeaderName));
 
     if (isSectionHeader) {
       if (currentSection && currentSection.lines.length > 0) {
@@ -261,15 +265,18 @@ export default function SongLyricsRenderer({
     return { activeSectionIdx: -1, activeLineIdx: -1 };
   }, [isPlaybackActive, currentTime, sections, sectionTimingMap, effectiveBpm]);
 
-  // Auto-scroll to keep the active line centered during playback
+  // Auto-scroll to keep the active line visible during playback (localized scroll only)
   useEffect(() => {
-    if ((isAutoScrolling || isPlaybackActive) && activeLineRef.current) {
-      activeLineRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'nearest',
-      });
+    if ((isAutoScrolling || isPlaybackActive) && activeLineRef.current && scrollRef?.current) {
+      const container = scrollRef.current;
+      const line = activeLineRef.current;
+      const lineTop = line.offsetTop;
+      const lineHeight = line.offsetHeight;
+      const containerHeight = container.offsetHeight;
+      const targetScrollTop = lineTop - containerHeight / 2 + lineHeight / 2;
+      container.scrollTo({ top: Math.max(0, targetScrollTop), behavior: 'smooth' });
     }
-  }, [activeSectionIdx, activeLineIdx, isAutoScrolling, isPlaybackActive]);
+  }, [activeSectionIdx, activeLineIdx, isAutoScrolling, isPlaybackActive, scrollRef]);
 
   return (
     <>

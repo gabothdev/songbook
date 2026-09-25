@@ -58,6 +58,7 @@ export default function NotebookSpread() {
     handleImportScrapedSong,
   } = useSetlistManager({
     onSelectSong: (song) => setSelectedSong(song),
+    onUpdateSelectedSong: (updaterFn) => setSelectedSong(updaterFn),
   });
 
   const triggerPageFlip = (direction, callback) => {

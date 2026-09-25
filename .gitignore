@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules
 server/node_modules
 
@@ -16,10 +16,12 @@ server/cache/
 *.wav
 
 # SQLite Database & Prisma
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 server/prisma/*.db
-server/prisma/*.db-journal
-server/prisma/*.db-wal
-server/prisma/*.db-shm
+server/*.db
 
 # Environment & Logs
 .env
@@ -38,3 +40,7 @@ Thumbs.db
 .idea
 
 server/debug_*
+server/test_*.js
+server/*.html
+server/*.png
+server/*.jpg

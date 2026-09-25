@@ -135,6 +135,8 @@ async function getYouTubeMetadata(youtubeId) {
 
 // --- Ruta de Búsqueda de YouTube (Fase 4 - Auto-Playback) ---
 
+// --- Ruta de Búsqueda de YouTube con múltiples opciones para selector visual ---
+
 router.get('/search/youtube', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ message: 'Query is required.' });
@@ -144,8 +146,10 @@ router.get('/search/youtube', async (req, res) => {
     // Fetch HTML from YouTube search page
     const response = await axios.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36'
-      }
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'es,en;q=0.9',
+      },
+      timeout: 6000,
     });
 
     const html = response.data;
@@ -155,19 +159,38 @@ router.get('/search/youtube', async (req, res) => {
     const matches = [];
     let match;
     while ((match = regex.exec(html)) !== null) {
-      matches.push(match[1]);
+      if (!matches.includes(match[1])) {
+        matches.push(match[1]);
+      }
+      if (matches.length >= 6) break;
     }
 
     if (matches.length > 0) {
-      // Return the first unique videoId
-      const uniqueVideoIds = [...new Set(matches)];
-      res.json({ videoId: uniqueVideoIds[0] });
+      // Obtener metadatos rápidos de las primeras 4 opciones
+      const topIds = matches.slice(0, 4);
+      const videoOptions = await Promise.all(
+        topIds.map(async (vId) => {
+          const meta = await getYouTubeMetadata(vId);
+          return {
+            videoId: vId,
+            title: meta.title || query,
+            artist: meta.artist || 'YouTube',
+            thumbnail: `https://i.ytimg.com/vi/${vId}/mqdefault.jpg`,
+            url: `https://www.youtube.com/watch?v=${vId}`,
+          };
+        })
+      );
+
+      res.json({
+        videoId: matches[0],
+        options: videoOptions,
+      });
     } else {
-      res.status(404).json({ message: 'No videos found.' });
+      res.status(404).json({ message: 'No se encontraron videos.', options: [] });
     }
   } catch (error) {
     console.error('[API YouTube] Error al buscar video:', error.message);
-    res.status(500).json({ message: `Error en el servidor al buscar video: ${error.message}` });
+    res.status(500).json({ message: `Error en el servidor al buscar video: ${error.message}`, options: [] });
   }
 });
 

@@ -48,9 +48,14 @@ export default function ChordCatalogPanel({
   activeChord = 'C',
   instrument = 'guitar',
   setlistContext = null,
+  isEditMode = false,
+  currentTime = null,
+  onSetTimestamp = null,
+  onAddMeasure = null,
+  className = '',
 }) {
   return (
-    <div className="flex-1 flex flex-col justify-between bg-[#fcf9f2] rounded-2xl md:rounded-l-none md:rounded-r-2xl shadow-[inset_10px_0_15px_rgba(0,0,0,0.06)] border border-stone-300 overflow-hidden paper-texture p-7 lg:p-9 min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] relative z-10">
+    <div className={`flex-1 min-w-0 flex flex-col justify-between bg-[#fcf9f2] rounded-2xl md:rounded-l-none md:rounded-r-2xl shadow-[inset_10px_0_15px_rgba(0,0,0,0.06)] border border-stone-300 overflow-hidden paper-texture p-7 lg:p-9 min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] relative z-10 ${className}`}>
       <div className="absolute top-0 left-0 bottom-0 w-10 bg-gradient-to-r from-stone-900/10 to-transparent pointer-events-none z-10" />
 
       <div className="space-y-4">
@@ -144,6 +149,10 @@ export default function ChordCatalogPanel({
               onBeatClick={onBeatClick}
               mode={beatGridMode}
               transpose={transpose}
+              isEditMode={isEditMode}
+              currentTime={currentTime}
+              onSetTimestamp={onSetTimestamp}
+              onAddMeasure={onAddMeasure}
             />
 
             {/* Active Chord Card in real-time below the Ribbon */}

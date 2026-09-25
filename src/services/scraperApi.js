@@ -184,3 +184,21 @@ export async function fetchSongContent(songItem) {
 
   return songItem;
 }
+
+/**
+ * Searches YouTube video options with thumbnails, titles and channels
+ */
+export async function searchYouTubeOptions(query) {
+  if (!query || !query.trim()) return [];
+  try {
+    const res = await fetch(`${API_BASE_URL}/search/youtube?q=${encodeURIComponent(query.trim())}`);
+    if (res.ok) {
+      const data = await res.json();
+      return data.options || (data.videoId ? [{ videoId: data.videoId, title: query, artist: 'YouTube' }] : []);
+    }
+  } catch (e) {
+    console.warn('[searchYouTubeOptions] Error:', e.message);
+  }
+  return [];
+}
+

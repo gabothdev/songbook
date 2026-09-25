@@ -5,6 +5,14 @@
  * y genera una estructura de compases y tiempos (4/4) para el BeatGrid interactivo.
  */
 
+import { alignChordsWithLyrics } from './music.js';
+
+// Section keywords to recognize section headers accurately
+const SECTION_KEYWORDS = /^(intro|verse|verso|estrofa|prechorus|pre-chorus|precoro|pre-coro|chorus|coro|estribillo|bridge|puente|solo|outro|final|coda|hook|interlude|interludio|part|parte|seccion|sección|tema|acapella|instrumental|bloque)/i;
+
+// Regex to test if a string is a standard music chord notation
+const CHORD_REGEX = /^[A-G][b#]?(?:m|maj|min|dim|aug|sus|add|\d|M|\/|[A-G][b#]?)*$/i;
+
 /**
  * Parsea el texto de una canción a un listado de compases estructurados para la grilla
  * @param {string} text Texto completo de la canción
@@ -14,7 +22,8 @@
 export function parseSongTextToGrid(text, beatsPerMeasure = 4) {
   if (!text || typeof text !== 'string') return [];
 
-  const lines = text.split('\n');
+  const alignedText = alignChordsWithLyrics(text);
+  const lines = alignedText.split('\n');
   const compases = [];
   let currentSection = 'Intro';
   let sectionStartTime = null;
@@ -25,16 +34,24 @@ export function parseSongTextToGrid(text, beatsPerMeasure = 4) {
     if (trimmedLine === '') return;
 
     // Ignorar líneas de metadatos
-    if (trimmedLine.match(/^\[(?:BPM|Beats|TimeSignature)\s*@\s*[\d./]+\]$/i)) {
+    if (trimmedLine.match(/^\[(?:BPM|Beats|TimeSignature|Time)\s*[@:]?\s*[\d./]+\]$/i)) {
       return;
     }
 
-    // 1. Detectar cabeceras de sección con tiempo opcional
-    const sectionMatch = trimmedLine.match(/^\[(Intro|Estrofa\s*\d*|Verse\s*\d*|Coro|Chorus|Pre-Estribillo|Pre-Chorus|Solo|Puente|Bridge|Outro|Tema)(?:\s*@\s*([\d.]+))?\]$/i);
-    if (sectionMatch) {
-      currentSection = sectionMatch[1];
-      sectionStartTime = sectionMatch[2] ? parseFloat(sectionMatch[2]) : null;
-      return;
+    // 1. Detectar cabeceras de sección con tiempo opcional: [Parte A], [Intro @ 12.5], [Coro], [Solo]
+    const headerMatch = trimmedLine.match(/^\[\s*([a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s\-_/]+?)(?:\s*@\s*([\d.]+))?\s*\]$/);
+    if (headerMatch) {
+      const headerName = headerMatch[1].trim();
+      const isExplicitSection =
+        headerMatch[2] !== undefined ||
+        SECTION_KEYWORDS.test(headerName) ||
+        !CHORD_REGEX.test(headerName);
+
+      if (isExplicitSection) {
+        currentSection = headerName;
+        sectionStartTime = headerMatch[2] ? parseFloat(headerMatch[2]) : null;
+        return;
+      }
     }
 
     // 2. Analizar partes del texto de la línea para separar acordes y letras

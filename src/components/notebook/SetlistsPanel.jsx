@@ -33,6 +33,7 @@ export default function SetlistsPanel({
 }) {
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [newSetlistName, setNewSetlistName] = useState('');
+  const [confirmDeleteSetlist, setConfirmDeleteSetlist] = useState(false);
 
   const handleCreateSubmit = (e) => {
     e.preventDefault();
@@ -180,18 +181,50 @@ export default function SetlistsPanel({
                   <span>Todos los Setlists</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (window.confirm(`¿Eliminar el setlist "${activeSetlist.name}"?`)) {
-                      onDeleteSetlist(activeSetlist.name);
-                    }
-                  }}
-                  className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                  title="Eliminar este setlist"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {/* Delete button → opens inline confirm */}
+                <AnimatePresence mode="wait">
+                  {confirmDeleteSetlist ? (
+                    <motion.div
+                      key="confirm"
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      className="flex items-center gap-1.5 bg-red-50 border border-red-300 rounded-lg px-2 py-1"
+                    >
+                      <span className="text-[11px] font-sans font-bold text-red-800">¿Eliminar?</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDeleteSetlist(activeSetlist.name);
+                          setConfirmDeleteSetlist(false);
+                        }}
+                        className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[11px] font-bold font-sans cursor-pointer transition-colors"
+                      >
+                        Sí
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteSetlist(false)}
+                        className="px-2 py-0.5 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded text-[11px] font-bold font-sans cursor-pointer transition-colors"
+                      >
+                        No
+                      </button>
+                    </motion.div>
+                  ) : (
+                    <motion.button
+                      key="trash"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      type="button"
+                      onClick={() => setConfirmDeleteSetlist(true)}
+                      className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                      title="Eliminar este setlist"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </motion.button>
+                  )}
+                </AnimatePresence>
               </div>
 
               <div className="flex items-center justify-between">

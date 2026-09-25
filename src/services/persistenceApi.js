@@ -38,6 +38,48 @@ export async function saveSong(songData) {
 }
 
 /**
+ * Saves a customized / arranged version of a song (isCustom: true)
+ */
+export async function saveCustomSongVersion({ id, title, artist, content, syncData, originalContent }) {
+  try {
+    const res = await fetch(`${BASE_URL}/songs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id,
+        title,
+        artist,
+        content,
+        syncData,
+        originalContent,
+        isCustom: true,
+      }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('[Persistence API] Failed to save custom song version:', err.message);
+  }
+  return null;
+}
+
+/**
+ * Restores a song to its original unedited content
+ */
+export async function restoreOriginalSong({ id, title, artist }) {
+  try {
+    const res = await fetch(`${BASE_URL}/songs/restore-original`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, title, artist }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('[Persistence API] Failed to restore original song:', err.message);
+  }
+  return null;
+}
+
+/**
  * Updates a song's transpose and chord variant preferences
  */
 export async function updateSongPreferences({ id, title, artist, transpose, chordVariants }) {
