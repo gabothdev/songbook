@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 25.3.1, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1"
+	 id="svg2" inkscape:output_extension="org.inkscape.output.svg.inkscape" sodipodi:docname="smerrell_polaroid_gloss.svg" sodipodi:version="0.32" xmlns:cc="http://creativecommons.org/ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:ns1="http://sozi.baierouge.fr" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns:svg="http://www.w3.org/2000/svg"
+	 xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 350 380"
+	 style="enable-background:new 0 0 350 380;" xml:space="preserve">
+<style type="text/css">
+	.st0{filter:url(#filter2912);}
+	.st1{fill:#F2F2F2;}
+	.st2{opacity:0.5556;fill:#CCCCCC;enable-background:new    ;}
+	.st3{stroke:#000000;stroke-width:0.7825;stroke-linejoin:round;}
+	.st4{opacity:0.1991;fill:#FFFFFF;enable-background:new    ;}
+</style>
+<filter  id="filter2912" inkscape:collect="always">
+	<feGaussianBlur  id="feGaussianBlur2914" inkscape:collect="always" stdDeviation="3.4782385"></feGaussianBlur>
+</filter>
+<g id="layer1" transform="translate(-413.06 -322.28)" inkscape:groupmode="layer" inkscape:label="Layer 1">
+	<g id="g3271" transform="translate(9.9102 9.3779)">
+		<g id="rect2893" sodipodi:nodetypes="ccczcc" class="st0">
+			<path d="M413.1,322.3h330.2v365.5c0,0-82.5-7.2-165.1-7.2c-82.5,0-165.1,7.2-165.1,7.2L413.1,322.3L413.1,322.3z"/>
+		</g>
+		<rect id="rect2889" x="413.1" y="318" class="st1" width="330.2" height="362.2"/>
+		<rect id="rect2916" x="424.9" y="328.2" class="st2" width="306.5" height="308.6"/>
+		<rect id="photo" x="428" y="331.1" class="st3" width="300.3" height="300.3"/>
+		<path id="rect3250" sodipodi:nodetypes="cczcc" class="st4" d="M427.6,330.8h300.3c0,0-47.3,61.4-122.4,103
+			C530.4,475.3,427.6,497,427.6,497V330.8z"/>
+	</g>
+</g>
+</svg>

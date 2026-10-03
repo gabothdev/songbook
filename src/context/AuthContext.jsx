@@ -4,7 +4,9 @@ const AuthContext = createContext();
 
 export const TIERS = {
   FREE: 'FREE',
-  PREMIUM: 'PREMIUM',
+  PRO: 'PRO',
+  ADMIN: 'ADMIN',
+  PREMIUM: 'PRO', // Alias de compatibilidad
 };
 
 export const TIER_LIMITS = {
@@ -15,27 +17,50 @@ export const TIER_LIMITS = {
     allowedInstruments: ['guitar', 'ukelele', 'vocals'],
     canExportPdf: false,
     canSyncCloud: false,
+    canEditArtwork: false,
   },
-  PREMIUM: {
+  PRO: {
     maxSongs: Infinity,
     maxSetlists: Infinity,
     hasAds: false,
     allowedInstruments: ['guitar', 'piano', 'bandoneon', 'ukelele', 'vocals'],
     canExportPdf: true,
     canSyncCloud: true,
+    canEditArtwork: false,
+  },
+  ADMIN: {
+    maxSongs: Infinity,
+    maxSetlists: Infinity,
+    hasAds: false,
+    allowedInstruments: ['guitar', 'piano', 'bandoneon', 'ukelele', 'vocals'],
+    canExportPdf: true,
+    canSyncCloud: true,
+    canEditArtwork: true,
   },
 };
+
+TIER_LIMITS.PREMIUM = TIER_LIMITS.PRO;
 
 const DEFAULT_USERS = {
   'gabothdev@gmail.com': {
     name: 'Gabriel (GabothDev)',
     email: 'gabothdev@gmail.com',
     instrument: 'Guitarra & Bandoneón',
-    tier: TIERS.PREMIUM,
-    role: 'Músico Pro',
+    tier: TIERS.ADMIN,
+    role: 'Administrador',
     songsCount: 18,
     setlistsCount: 4,
     chordsLearned: 36,
+  },
+  'pro.user@songbook.app': {
+    name: 'Músico Pro',
+    email: 'pro.user@songbook.app',
+    instrument: 'Guitarra & Piano',
+    tier: TIERS.PRO,
+    role: 'Músico Pro',
+    songsCount: 12,
+    setlistsCount: 3,
+    chordsLearned: 24,
   },
   'invitado': {
     name: 'Músico Free',
@@ -104,24 +129,45 @@ export function AuthProvider({ children }) {
     setCurrentUser(null);
   };
 
+  // Cycles through: FREE -> PRO -> ADMIN -> FREE
   const toggleTier = () => {
     if (!currentUser) return;
-    setCurrentUser((prev) => ({
-      ...prev,
-      tier: prev.tier === TIERS.FREE ? TIERS.PREMIUM : TIERS.FREE,
-      role: prev.tier === TIERS.FREE ? 'Músico Pro' : 'Usuario Free',
-    }));
+    setCurrentUser((prev) => {
+      let nextTier = TIERS.PRO;
+      let nextRole = 'Músico Pro';
+
+      if (prev.tier === TIERS.FREE) {
+        nextTier = TIERS.PRO;
+        nextRole = 'Músico Pro';
+      } else if (prev.tier === TIERS.PRO || prev.tier === 'PREMIUM') {
+        nextTier = TIERS.ADMIN;
+        nextRole = 'Administrador';
+      } else {
+        nextTier = TIERS.FREE;
+        nextRole = 'Usuario Free';
+      }
+
+      return {
+        ...prev,
+        tier: nextTier,
+        role: nextRole,
+      };
+    });
   };
 
   const upgradeToPro = () => {
     if (!currentUser) return;
     setCurrentUser((prev) => ({
       ...prev,
-      tier: TIERS.PREMIUM,
+      tier: TIERS.PRO,
       role: 'Músico Pro',
     }));
     setIsUpgradeModalOpen(false);
   };
+
+  const isPro = currentUser?.tier === TIERS.PRO || currentUser?.tier === TIERS.ADMIN || currentUser?.tier === 'PREMIUM';
+  const isAdmin = currentUser?.tier === TIERS.ADMIN;
+  const canEditArtwork = isAdmin;
 
   const limits = currentUser ? TIER_LIMITS[currentUser.tier] || TIER_LIMITS.FREE : TIER_LIMITS.FREE;
 
@@ -145,6 +191,9 @@ export function AuthProvider({ children }) {
         logout,
         toggleTier,
         upgradeToPro,
+        isPro,
+        isAdmin,
+        canEditArtwork,
         limits,
         canAddSong,
         canAddSetlist,

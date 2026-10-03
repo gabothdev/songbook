@@ -15,6 +15,7 @@ import {
 import SpiralRings from '../components/notebook/SpiralRings';
 import AdBanner from '../components/monetization/AdBanner';
 import { useLanguage } from '../context/LanguageContext';
+import LanguageSelector from '../components/notebook/LanguageSelector';
 import { useAuth, TIERS } from '../context/AuthContext';
 
 const USER_SONGS = [
@@ -68,6 +69,7 @@ export default function DashboardNotebookPage({ onLogout, onOpenSong }) {
 
         {/* Status + Demo Tier Switcher + Logout */}
         <div className="flex items-center gap-3">
+          <LanguageSelector />
           <button
             onClick={toggleTier}
             className={`px-3 py-1 rounded-lg text-xs font-bold font-sans transition-all flex items-center gap-1.5 cursor-pointer ${

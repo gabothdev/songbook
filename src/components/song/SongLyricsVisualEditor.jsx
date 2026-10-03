@@ -1,199 +1,52 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Sparkles,
   RotateCcw,
   Save,
   X,
   Plus,
-  Tag,
-  Trash2,
   Music2,
   FileText,
-  ChevronDown,
-  Check,
   Zap,
   ArrowUp,
   ArrowDown,
   Scissors,
-  GripVertical,
-  Edit3,
-  Combine,
+  Undo2,
+  Redo2,
+  MousePointerClick,
+  Stamp,
+  Layers,
 } from 'lucide-react';
-import { normalizeChordName, alignChordsWithLyrics } from '../../utils/music';
+import { normalizeChordName } from '../../utils/music';
+import {
+  parseLyricsToVisualBlocks,
+  reconstructTextFromBlocks,
+  isInstrumentalSong,
+  splitWordAtChar,
+  mergeSyllableWithNext,
+} from '../../utils/lyricsBlocks';
 
-const SECTION_TYPES = [
-  'Intro',
-  'Estrofa 1',
-  'Estrofa 2',
-  'Estrofa 3',
-  'Pre-Coro',
-  'Coro',
-  'Puente',
-  'Solo',
-  'Interludio',
-  'Outro',
-  'Final',
-  'Parte A',
-  'Parte B',
-  'Instrumental',
-  'Acapella',
-  'Coda',
-];
-
-/**
- * Parses raw text with [Section] and [Chord] tags into structured visual blocks
- */
-function parseLyricsToVisualBlocks(rawText) {
-  if (!rawText || !rawText.trim()) return [];
-
-  // Harmonically align multi-line chord tabs into inline chord words
-  const alignedText = alignChordsWithLyrics(rawText);
-  const lines = alignedText.split('\n');
-  const sections = [];
-  let currentSection = {
-    id: `sec_${Date.now()}_0`,
-    name: 'Intro',
-    time: null,
-    lines: [],
-  };
-
-  lines.forEach((line, lineIdx) => {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    // Check for Section Header: [Intro @ 12.5], [Verse 1], [Parte A], [Coro], etc.
-    const headerMatch = trimmed.match(/^\[\s*([a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s\-_/]+?)(?:\s*@\s*([0-9:.]+))?\s*\]$/);
-    const innerName = headerMatch ? headerMatch[1].trim() : '';
-    const isSection =
-      headerMatch &&
-      (headerMatch[2] !== undefined ||
-       /^(intro|verse|verso|estrofa|prechorus|pre-chorus|precoro|pre-coro|chorus|coro|estribillo|bridge|puente|solo|outro|final|coda|hook|interlude|interludio|part|parte|seccion|sección|tema|acapella|instrumental|bloque|bpm|beats|time)/i.test(innerName) ||
-       !/^[A-G][b#]?(?:m|maj|min|dim|aug|sus|add|\d|M|\/|[A-G][b#]?)*$/i.test(innerName));
-
-    if (isSection) {
-      if (currentSection.lines.length > 0 || currentSection.name !== 'Intro') {
-        sections.push(currentSection);
-      }
-      currentSection = {
-        id: `sec_${Date.now()}_${lineIdx}_${Math.random().toString(36).substring(2, 6)}`,
-        name: innerName,
-        time: headerMatch[2] ? headerMatch[2].trim() : null,
-        lines: [],
-      };
-      return;
-    }
-
-    // Parse words and attached chords in this line
-    const parsedWords = [];
-    const parts = line.split(/(\[[^\]]+\])/g);
-    let pendingChord = null;
-
-    parts.forEach((part) => {
-      if (!part) return;
-      if (part.startsWith('[') && part.endsWith(']')) {
-        const chord = part.slice(1, -1).trim();
-        if (/^(?:BPM|Beats|Time)/i.test(chord)) return;
-
-        if (pendingChord) {
-          parsedWords.push({
-            id: `w_${Math.random().toString(36).substring(2, 8)}`,
-            type: 'word',
-            text: ' ',
-            chord: pendingChord,
-          });
-        }
-        pendingChord = normalizeChordName(chord);
-      } else {
-        const wordsInPart = part.split(/(\s+)/);
-        wordsInPart.forEach((w) => {
-          if (!w) return;
-          if (/^\s+$/.test(w)) {
-            parsedWords.push({ type: 'space', text: w });
-          } else {
-            parsedWords.push({
-              id: `w_${Math.random().toString(36).substring(2, 8)}`,
-              type: 'word',
-              text: w,
-              chord: pendingChord,
-            });
-            pendingChord = null;
-          }
-        });
-      }
-    });
-
-    if (pendingChord) {
-      parsedWords.push({
-        id: `w_${Math.random().toString(36).substring(2, 8)}`,
-        type: 'word',
-        text: ' ',
-        chord: pendingChord,
-      });
-    }
-
-    if (parsedWords.length > 0) {
-      currentSection.lines.push({
-        id: `line_${lineIdx}_${Math.random().toString(36).substring(2, 6)}`,
-        words: parsedWords,
-      });
-    }
-  });
-
-  if (currentSection.lines.length > 0 || sections.length === 0) {
-    sections.push(currentSection);
-  }
-
-  return sections;
-}
-
-/**
- * Reconstructs raw text from visual sections and words
- */
-function reconstructTextFromBlocks(sections) {
-  let output = '';
-  sections.forEach((sec) => {
-    const validLines = sec.lines.filter((line) => line && line.words && line.words.length > 0);
-    if (validLines.length === 0 && sec.name === 'Intro') {
-      return;
-    }
-
-    const timeStr = sec.time ? ` @ ${sec.time}` : '';
-    output += `[${sec.name}${timeStr}]\n`;
-
-    validLines.forEach((line) => {
-      let lineStr = '';
-
-      line.words.forEach((item) => {
-        if (item.type === 'space') {
-          lineStr += item.text;
-        } else if (item.type === 'word') {
-          if (item.chord) {
-            lineStr += `[${item.chord}]${item.text}`;
-          } else {
-            lineStr += item.text;
-          }
-        }
-      });
-
-      if (lineStr.trim()) {
-        output += lineStr.trimEnd() + '\n';
-      }
-    });
-
-    output += '\n';
-  });
-
-  return output.trim();
-}
+import AddSectionPopover from './editor/AddSectionPopover';
+import SectionBoundaryDivider from './editor/SectionBoundaryDivider';
+import SectionGutterHeader from './editor/SectionGutterHeader';
+import WordChordDropSlot from './editor/WordChordDropSlot';
+import { LinePrefixChords, LineSuffixChords } from './editor/LineChordPrefixSuffix';
+import QuickChordPickerModal from './editor/QuickChordPickerModal';
+import AddLyricsModal from './editor/AddLyricsModal';
 
 /**
  * SongLyricsVisualEditor Component
- * Unified visual builder matching SongLyricsRenderer's 90° gutter design,
- * with dynamic boundary resizing to expand/contract sections and drag-drop chords.
+ * Master interactive lyrics & chords arranger matching the 90° gutter notebook theme.
+ * Features:
+ * - Visual chord drag-and-drop & Quick Chord Stamp tool
+ * - Pickup (prefix) and Outro (suffix) chord slots before and after phrases
+ * - Fine syllable-level chord alignment (✂️ word split into sub-syllables)
+ * - Instrumental sections and fast measures insertion with metric signatures (4/4, 2/4, 3/4, 6/8)
+ * - Multi-level Undo / Redo (Ctrl+Z / Ctrl+Y)
+ * - 1-Click Section Duplication & Section Reordering (Up/Down)
+ * - Live Video Timestamp Sync (📌 Tap to Sync @ 45.2s)
+ * - Inline Double-Click Word Text Editing
+ * - Bidirectional synchronization with BeatGrid
  */
 export default function SongLyricsVisualEditor({
   draftContent,
@@ -206,121 +59,131 @@ export default function SongLyricsVisualEditor({
   isSaving = false,
   isSyncMode = true,
   onToggleSyncMode = null,
+  currentPlaybackTime = null,
+  activeSectionName = null,
+  onSelectSection = null,
+  onSelectChord = null,
   className = '',
 }) {
   const visualSections = useMemo(() => {
     return parseLyricsToVisualBlocks(draftContent);
   }, [draftContent]);
 
+  // History Stacks for Undo / Redo
+  const [historyPast, setHistoryPast] = useState([]);
+  const [historyFuture, setHistoryFuture] = useState([]);
+
+  // Editor Interaction States
   const [activeDropWordId, setActiveDropWordId] = useState(null);
+  const [activeStampChord, setActiveStampChord] = useState(null);
   const [isAddLyricsModalOpen, setIsAddLyricsModalOpen] = useState(false);
-  const [newLyricsInput, setNewLyricsInput] = useState('');
   const [selectedWordForPicker, setSelectedWordForPicker] = useState(null);
-  const [customChordInput, setCustomChordInput] = useState('');
   const [toastMessage, setToastMessage] = useState(null);
-  const [contextMenu, setContextMenu] = useState(null);
-  const [customSectionInput, setCustomSectionInput] = useState('');
   const [editingSectionPopover, setEditingSectionPopover] = useState(null); // sec.id
-  const [popoverCustomName, setPopoverCustomName] = useState('');
   const [addSectionPopover, setAddSectionPopover] = useState(null); // { atIndex: number, id: string }
-  const [newSectionCustomName, setNewSectionCustomName] = useState('');
-
-  const lyricsTextareaRef = useRef(null);
-
-  // Close context menu & popover on external click or escape
-  useEffect(() => {
-    const handleDismiss = () => {
-      setContextMenu(null);
-      setEditingSectionPopover(null);
-      setAddSectionPopover(null);
-    };
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        setContextMenu(null);
-        setEditingSectionPopover(null);
-        setAddSectionPopover(null);
-      }
-    };
-    window.addEventListener('click', handleDismiss);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('click', handleDismiss);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, []);
-
-  const handleTextareaContextMenu = (e) => {
-    e.preventDefault();
-    const el = lyricsTextareaRef.current;
-    if (!el) return;
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-
-    const posX = Math.min(e.clientX, window.innerWidth - 230);
-    const posY = Math.min(e.clientY, window.innerHeight - 360);
-
-    setCustomSectionInput('');
-    setContextMenu({
-      x: Math.max(10, posX),
-      y: Math.max(10, posY),
-      start,
-      end,
-    });
-  };
-
-  const handleAssignSectionFromContext = (sectionTag) => {
-    if (!contextMenu) return;
-    const { start, end } = contextMenu;
-    const current = newLyricsInput;
-    let updated = '';
-
-    if (start !== end && start >= 0 && end <= current.length) {
-      const before = current.substring(0, start);
-      const selected = current.substring(start, end).trim();
-      const after = current.substring(end);
-
-      const prefix = before.length === 0 || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
-      const suffix = after.startsWith('\n') ? '' : '\n\n';
-
-      updated = before + prefix + `${sectionTag}\n${selected}` + suffix + after;
-    } else {
-      const pos = start !== undefined ? start : current.length;
-      const before = current.substring(0, pos);
-      const after = current.substring(pos);
-      const prefix = before.length === 0 || before.endsWith('\n') ? '' : '\n';
-      updated = before + prefix + `${sectionTag}\n` + after;
-    }
-
-    setNewLyricsInput(updated);
-    setContextMenu(null);
-    if (lyricsTextareaRef.current) {
-      lyricsTextareaRef.current.focus();
-    }
-  };
+  const [highlightedLineKey, setHighlightedLineKey] = useState(null);
 
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 2000);
   };
 
-  // Check if the song has almost no words (Instrumental or pure chords)
-  const isInstrumental = useMemo(() => {
-    let wordCount = 0;
-    visualSections.forEach((sec) => {
-      sec.lines.forEach((line) => {
-        line.words.forEach((w) => {
-          if (w.type === 'word' && w.text.trim() && w.text !== ' ') {
-            wordCount++;
+  // Helper to commit content updates with undo history
+  const updateContentWithHistory = useCallback(
+    (newContent) => {
+      if (newContent === draftContent) return;
+      setHistoryPast((prev) => [...prev.slice(-25), draftContent]);
+      setHistoryFuture([]);
+      setDraftContent(newContent);
+    },
+    [draftContent, setDraftContent]
+  );
+
+  // Undo / Redo Handlers
+  const handleUndo = useCallback(() => {
+    if (historyPast.length === 0) return;
+    const previous = historyPast[historyPast.length - 1];
+    setHistoryPast((prev) => prev.slice(0, prev.length - 1));
+    setHistoryFuture((prev) => [draftContent, ...prev]);
+    setDraftContent(previous);
+    showToast('Deshecho');
+  }, [historyPast, draftContent, setDraftContent]);
+
+  const handleRedo = useCallback(() => {
+    if (historyFuture.length === 0) return;
+    const next = historyFuture[0];
+    setHistoryFuture((prev) => prev.slice(1));
+    setHistoryPast((prev) => [...prev, draftContent]);
+    setDraftContent(next);
+    showToast('Rehecho');
+  }, [historyFuture, draftContent, setDraftContent]);
+
+  // Global Keyboard Shortcuts (Ctrl+Z / Ctrl+Y, Escape) and Outside Dismiss
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const targetTag = e.target?.tagName?.toLowerCase();
+      const isTyping = targetTag === 'input' || targetTag === 'textarea';
+
+      if (e.key === 'Escape') {
+        setEditingSectionPopover(null);
+        setAddSectionPopover(null);
+        setActiveStampChord(null);
+        return;
+      }
+
+      if (!isTyping && (e.ctrlKey || e.metaKey)) {
+        if (e.key.toLowerCase() === 'z') {
+          if (e.shiftKey) {
+            e.preventDefault();
+            handleRedo();
+          } else {
+            e.preventDefault();
+            handleUndo();
           }
-        });
-      });
-    });
-    return wordCount <= 3;
+        } else if (e.key.toLowerCase() === 'y') {
+          e.preventDefault();
+          handleRedo();
+        }
+      }
+    };
+
+    const handleDismiss = () => {
+      setEditingSectionPopover(null);
+      setAddSectionPopover(null);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('click', handleDismiss);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('click', handleDismiss);
+    };
+  }, [handleUndo, handleRedo]);
+
+  const isInstrumental = useMemo(() => {
+    return isInstrumentalSong(visualSections);
   }, [visualSections]);
 
-  // Updates a specific word's chord
-  const handleAssignChordToWord = (secIdx, lineIdx, wordId, chordName) => {
+  // Updates a specific word's chord (and clears source if dragged from another word/slot)
+  const handleAssignChordToWord = (secIdx, lineIdx, wordId, chordName, sourceData = null) => {
     const updated = JSON.parse(JSON.stringify(visualSections));
+
+    // If moved from another word/slot, remove from source first
+    if (sourceData) {
+      const { sourceWordId, sourcePrefixId, sourceSuffixId, sourceSecIdx, sourceLineIdx } = sourceData;
+      if (sourceSecIdx !== undefined && sourceLineIdx !== undefined && updated[sourceSecIdx]?.lines?.[sourceLineIdx]) {
+        const srcLine = updated[sourceSecIdx].lines[sourceLineIdx];
+        if (sourceWordId && srcLine.words) {
+          const srcWord = srcLine.words.find((w) => w.id === sourceWordId);
+          if (srcWord) srcWord.chord = null;
+        } else if (sourcePrefixId && srcLine.prefixChords) {
+          srcLine.prefixChords = srcLine.prefixChords.filter((p) => p.id !== sourcePrefixId);
+        } else if (sourceSuffixId && srcLine.suffixChords) {
+          srcLine.suffixChords = srcLine.suffixChords.filter((s) => s.id !== sourceSuffixId);
+        }
+      }
+    }
+
     const sec = updated[secIdx];
     if (!sec) return;
     const line = sec.lines[lineIdx];
@@ -330,10 +193,177 @@ export default function SongLyricsVisualEditor({
       word.chord = chordName ? normalizeChordName(chordName) : null;
     }
     const newContent = reconstructTextFromBlocks(updated);
-    setDraftContent(newContent);
+    updateContentWithHistory(newContent);
     if (chordName) {
-      showToast(`Acorde [${chordName}] acoplado`);
+      showToast(sourceData?.sourceWordId || sourceData?.sourcePrefixId || sourceData?.sourceSuffixId ? `Acorde [${chordName}] movido` : `Acorde [${chordName}] asignado`);
+      if (onSelectChord) onSelectChord(chordName);
     }
+  };
+
+  // Add a prefix chord (pickup / entrada) before the phrase
+  const handleAddPrefixChord = (secIdx, lineIdx, chordName, sourceData = null) => {
+    if (!chordName) return;
+    const updated = JSON.parse(JSON.stringify(visualSections));
+
+    // If moved from another word/slot, remove from source first
+    if (sourceData) {
+      const { sourceWordId, sourcePrefixId, sourceSuffixId, sourceSecIdx, sourceLineIdx } = sourceData;
+      if (sourceSecIdx !== undefined && sourceLineIdx !== undefined && updated[sourceSecIdx]?.lines?.[sourceLineIdx]) {
+        const srcLine = updated[sourceSecIdx].lines[sourceLineIdx];
+        if (sourceWordId && srcLine.words) {
+          const srcWord = srcLine.words.find((w) => w.id === sourceWordId);
+          if (srcWord) srcWord.chord = null;
+        } else if (sourcePrefixId && srcLine.prefixChords) {
+          srcLine.prefixChords = srcLine.prefixChords.filter((p) => p.id !== sourcePrefixId);
+        } else if (sourceSuffixId && srcLine.suffixChords) {
+          srcLine.suffixChords = srcLine.suffixChords.filter((s) => s.id !== sourceSuffixId);
+        }
+      }
+    }
+
+    const sec = updated[secIdx];
+    if (!sec) return;
+    const line = sec.lines[lineIdx];
+    if (!line) return;
+
+    if (!line.prefixChords) line.prefixChords = [];
+    line.prefixChords.push({
+      id: `p_${Math.random().toString(36).substring(2, 8)}`,
+      chord: normalizeChordName(chordName),
+    });
+
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+    showToast(sourceData?.sourceWordId || sourceData?.sourcePrefixId || sourceData?.sourceSuffixId ? `Acorde [${chordName}] movido a previo` : `Acorde previo [${chordName}] añadido`);
+    if (onSelectChord) onSelectChord(chordName);
+  };
+
+  // Remove a prefix chord
+  const handleRemovePrefixChord = (secIdx, lineIdx, chordId) => {
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    const sec = updated[secIdx];
+    if (!sec) return;
+    const line = sec.lines[lineIdx];
+    if (!line || !line.prefixChords) return;
+
+    line.prefixChords = line.prefixChords.filter((p) => p.id !== chordId);
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+  };
+
+  // Add a suffix chord (remate / salida) after the phrase
+  const handleAddSuffixChord = (secIdx, lineIdx, chordName, sourceData = null) => {
+    if (!chordName) return;
+    const updated = JSON.parse(JSON.stringify(visualSections));
+
+    // If moved from another word/slot, remove from source first
+    if (sourceData) {
+      const { sourceWordId, sourcePrefixId, sourceSuffixId, sourceSecIdx, sourceLineIdx } = sourceData;
+      if (sourceSecIdx !== undefined && sourceLineIdx !== undefined && updated[sourceSecIdx]?.lines?.[sourceLineIdx]) {
+        const srcLine = updated[sourceSecIdx].lines[sourceLineIdx];
+        if (sourceWordId && srcLine.words) {
+          const srcWord = srcLine.words.find((w) => w.id === sourceWordId);
+          if (srcWord) srcWord.chord = null;
+        } else if (sourcePrefixId && srcLine.prefixChords) {
+          srcLine.prefixChords = srcLine.prefixChords.filter((p) => p.id !== sourcePrefixId);
+        } else if (sourceSuffixId && srcLine.suffixChords) {
+          srcLine.suffixChords = srcLine.suffixChords.filter((s) => s.id !== sourceSuffixId);
+        }
+      }
+    }
+
+    const sec = updated[secIdx];
+    if (!sec) return;
+    const line = sec.lines[lineIdx];
+    if (!line) return;
+
+    if (!line.suffixChords) line.suffixChords = [];
+    line.suffixChords.push({
+      id: `s_${Math.random().toString(36).substring(2, 8)}`,
+      chord: normalizeChordName(chordName),
+    });
+
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+    showToast(sourceData?.sourceWordId || sourceData?.sourcePrefixId || sourceData?.sourceSuffixId ? `Acorde [${chordName}] movido a final` : `Acorde final [${chordName}] añadido`);
+    if (onSelectChord) onSelectChord(chordName);
+  };
+
+  // Remove a suffix chord
+  const handleRemoveSuffixChord = (secIdx, lineIdx, chordId) => {
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    const sec = updated[secIdx];
+    if (!sec) return;
+    const line = sec.lines[lineIdx];
+    if (!line || !line.suffixChords) return;
+
+    line.suffixChords = line.suffixChords.filter((s) => s.id !== chordId);
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+  };
+
+  // Fine Syllable Split (✂️)
+  const handleSplitWord = (secIdx, lineIdx, wordId, splitCharIndex) => {
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    const sec = updated[secIdx];
+    if (!sec) return;
+    const line = sec.lines[lineIdx];
+    if (!line || !line.words) return;
+
+    line.words = splitWordAtChar(line.words, wordId, splitCharIndex);
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+    showToast('Palabra dividida en sílabas');
+  };
+
+  // Merge Syllables back (🔗)
+  const handleMergeWords = (secIdx, lineIdx, wordId) => {
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    const sec = updated[secIdx];
+    if (!sec) return;
+    const line = sec.lines[lineIdx];
+    if (!line || !line.words) return;
+
+    line.words = mergeSyllableWithNext(line.words, wordId);
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+    showToast('Sílabas unificadas');
+  };
+
+  // Add an instrumental measure line inside a section
+  const handleAddInstrumentalLine = (secIdx, lineIdx) => {
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    const sec = updated[secIdx];
+    if (!sec) return;
+
+    const newLine = {
+      id: `line_inst_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      prefixChords: [
+        { id: `p_${Math.random().toString(36).substring(2, 8)}`, chord: '𝄾' },
+        { id: `p_${Math.random().toString(36).substring(2, 8)}`, chord: '𝄾' },
+      ],
+      words: [],
+      suffixChords: [],
+    };
+
+    if (lineIdx !== undefined && lineIdx !== null) {
+      sec.lines.splice(lineIdx + 1, 0, newLine);
+    } else {
+      sec.lines.push(newLine);
+    }
+
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+    showToast('Compás instrumental añadido');
+  };
+
+  // Inline Word Text Update (Double-click edit)
+  const handleUpdateWordText = (secIdx, lineIdx, wordId, newText) => {
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    const sec = updated[secIdx];
+    if (!sec) return;
+    const line = sec.lines[lineIdx];
+    if (!line) return;
+    const word = line.words.find((w) => w.id === wordId);
+    if (word) {
+      word.text = newText;
+    }
+    const newContent = reconstructTextFromBlocks(updated);
+    updateContentWithHistory(newContent);
+    showToast('Palabra actualizada');
   };
 
   // Drag over word slot handler
@@ -350,7 +380,7 @@ export default function SongLyricsVisualEditor({
     setActiveDropWordId(null);
   };
 
-  // Drop chord from BeatGrid onto word
+  // Drop chord onto word
   const handleDropOnWord = (e, secIdx, lineIdx, wordId) => {
     e.preventDefault();
     setActiveDropWordId(null);
@@ -360,7 +390,7 @@ export default function SongLyricsVisualEditor({
       if (dataStr) {
         const data = JSON.parse(dataStr);
         if (data.chord) {
-          handleAssignChordToWord(secIdx, lineIdx, wordId, data.chord);
+          handleAssignChordToWord(secIdx, lineIdx, wordId, data.chord, data);
           return;
         }
       }
@@ -373,49 +403,7 @@ export default function SongLyricsVisualEditor({
     }
   };
 
-  // Move line to previous section
-  const handleMoveLineToPrevSection = (secIdx, lineIdx) => {
-    if (secIdx <= 0) return;
-    const updated = JSON.parse(JSON.stringify(visualSections));
-    const currentSec = updated[secIdx];
-    const prevSec = updated[secIdx - 1];
-    if (!currentSec || !prevSec) return;
-
-    const [movedLine] = currentSec.lines.splice(lineIdx, 1);
-    if (!movedLine) return;
-
-    prevSec.lines.push(movedLine);
-
-    if (currentSec.lines.length === 0) {
-      updated.splice(secIdx, 1);
-    }
-
-    setDraftContent(reconstructTextFromBlocks(updated));
-    showToast(`Verso movido a [${prevSec.name}]`);
-  };
-
-  // Move line to next section
-  const handleMoveLineToNextSection = (secIdx, lineIdx) => {
-    if (secIdx >= visualSections.length - 1) return;
-    const updated = JSON.parse(JSON.stringify(visualSections));
-    const currentSec = updated[secIdx];
-    const nextSec = updated[secIdx + 1];
-    if (!currentSec || !nextSec) return;
-
-    const [movedLine] = currentSec.lines.splice(lineIdx, 1);
-    if (!movedLine) return;
-
-    nextSec.lines.unshift(movedLine);
-
-    if (currentSec.lines.length === 0) {
-      updated.splice(secIdx, 1);
-    }
-
-    setDraftContent(reconstructTextFromBlocks(updated));
-    showToast(`Verso movido a [${nextSec.name}]`);
-  };
-
-  // Move boundary UP: contract current section by moving its last verse to the next section
+  // Move boundary UP: contract current section by moving its last verse to next section
   const handleMoveBoundaryUp = (secIdx) => {
     if (secIdx >= visualSections.length - 1) return;
     const updated = JSON.parse(JSON.stringify(visualSections));
@@ -432,11 +420,11 @@ export default function SongLyricsVisualEditor({
       updated.splice(secIdx, 1);
     }
 
-    setDraftContent(reconstructTextFromBlocks(updated));
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
     showToast(`Límite subido: verso cedido a [${nextSec.name}]`);
   };
 
-  // Move boundary DOWN: expand current section by absorbing the first verse of the next section
+  // Move boundary DOWN: expand current section by absorbing first verse of next section
   const handleMoveBoundaryDown = (secIdx) => {
     if (secIdx >= visualSections.length - 1) return;
     const updated = JSON.parse(JSON.stringify(visualSections));
@@ -453,11 +441,11 @@ export default function SongLyricsVisualEditor({
       updated.splice(secIdx + 1, 1);
     }
 
-    setDraftContent(reconstructTextFromBlocks(updated));
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
     showToast(`Límite bajado: verso añadido a [${currentSec.name}]`);
   };
 
-  // Move individual line UP (within section or to previous section)
+  // Move individual line UP
   const handleMoveLineUp = (secIdx, lineIdx) => {
     const updated = JSON.parse(JSON.stringify(visualSections));
     const currentSec = updated[secIdx];
@@ -467,7 +455,7 @@ export default function SongLyricsVisualEditor({
       const temp = currentSec.lines[lineIdx];
       currentSec.lines[lineIdx] = currentSec.lines[lineIdx - 1];
       currentSec.lines[lineIdx - 1] = temp;
-      setDraftContent(reconstructTextFromBlocks(updated));
+      updateContentWithHistory(reconstructTextFromBlocks(updated));
       showToast('Verso movido hacia arriba');
     } else if (secIdx > 0) {
       const prevSec = updated[secIdx - 1];
@@ -476,12 +464,12 @@ export default function SongLyricsVisualEditor({
       if (currentSec.lines.length === 0) {
         updated.splice(secIdx, 1);
       }
-      setDraftContent(reconstructTextFromBlocks(updated));
+      updateContentWithHistory(reconstructTextFromBlocks(updated));
       showToast(`Verso movido a [${prevSec.name}]`);
     }
   };
 
-  // Move individual line DOWN (within section or to next section)
+  // Move individual line DOWN
   const handleMoveLineDown = (secIdx, lineIdx) => {
     const updated = JSON.parse(JSON.stringify(visualSections));
     const currentSec = updated[secIdx];
@@ -491,7 +479,7 @@ export default function SongLyricsVisualEditor({
       const temp = currentSec.lines[lineIdx];
       currentSec.lines[lineIdx] = currentSec.lines[lineIdx + 1];
       currentSec.lines[lineIdx + 1] = temp;
-      setDraftContent(reconstructTextFromBlocks(updated));
+      updateContentWithHistory(reconstructTextFromBlocks(updated));
       showToast('Verso movido hacia abajo');
     } else if (secIdx < updated.length - 1) {
       const nextSec = updated[secIdx + 1];
@@ -500,12 +488,12 @@ export default function SongLyricsVisualEditor({
       if (currentSec.lines.length === 0) {
         updated.splice(secIdx, 1);
       }
-      setDraftContent(reconstructTextFromBlocks(updated));
+      updateContentWithHistory(reconstructTextFromBlocks(updated));
       showToast(`Verso movido a [${nextSec.name}]`);
     }
   };
 
-  // Split section at specific line
+  // Split section at line
   const handleSplitSectionAtLine = (secIdx, lineIdx, newSectionName = 'Estrofa') => {
     const updated = JSON.parse(JSON.stringify(visualSections));
     const sec = updated[secIdx];
@@ -520,7 +508,7 @@ export default function SongLyricsVisualEditor({
     };
 
     updated.splice(secIdx + 1, 0, newSec);
-    setDraftContent(reconstructTextFromBlocks(updated));
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
     showToast(`Nueva sección [${newSectionName}] creada`);
   };
 
@@ -530,11 +518,87 @@ export default function SongLyricsVisualEditor({
     const updated = JSON.parse(JSON.stringify(visualSections));
     if (updated[secIdx]) {
       updated[secIdx].name = newName.trim();
-      setDraftContent(reconstructTextFromBlocks(updated));
+      updateContentWithHistory(reconstructTextFromBlocks(updated));
       showToast(`Sección renombrada a [${newName.trim()}]`);
     }
     setEditingSectionPopover(null);
-    setPopoverCustomName('');
+  };
+
+  // 📋 Duplicate Entire Section
+  const handleDuplicateSection = (secIdx) => {
+    const currentSec = visualSections[secIdx];
+    if (!currentSec) return;
+
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    const duplicatedLines = currentSec.lines.map((line) => ({
+      id: `line_dup_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      prefixChords: line.prefixChords
+        ? line.prefixChords.map((p) => ({
+            id: `p_dup_${Math.random().toString(36).substring(2, 8)}`,
+            chord: p.chord,
+          }))
+        : [],
+      words: line.words
+        ? line.words.map((w) => ({
+            ...w,
+            id: w.id ? `w_dup_${Math.random().toString(36).substring(2, 8)}` : undefined,
+          }))
+        : [],
+      suffixChords: line.suffixChords
+        ? line.suffixChords.map((s) => ({
+            id: `s_dup_${Math.random().toString(36).substring(2, 8)}`,
+            chord: s.chord,
+          }))
+        : [],
+    }));
+
+    const newSec = {
+      id: `sec_dup_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: `${currentSec.name} (Copia)`,
+      time: null,
+      lines: duplicatedLines,
+    };
+
+    updated.splice(secIdx + 1, 0, newSec);
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+    setEditingSectionPopover(null);
+    showToast(`Sección [${currentSec.name}] duplicada`);
+  };
+
+  // Move entire section UP
+  const handleMoveSectionUp = (secIdx) => {
+    if (secIdx <= 0) return;
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    const temp = updated[secIdx];
+    updated[secIdx] = updated[secIdx - 1];
+    updated[secIdx - 1] = temp;
+
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+    setEditingSectionPopover(null);
+    showToast(`Sección [${temp.name}] subida`);
+  };
+
+  // Move entire section DOWN
+  const handleMoveSectionDown = (secIdx) => {
+    if (secIdx >= visualSections.length - 1) return;
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    const temp = updated[secIdx];
+    updated[secIdx] = updated[secIdx + 1];
+    updated[secIdx + 1] = temp;
+
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+    setEditingSectionPopover(null);
+    showToast(`Sección [${temp.name}] bajada`);
+  };
+
+  // 📌 Set Section Timestamp
+  const handleSetSectionTimestamp = (secIdx, timeString) => {
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    if (updated[secIdx]) {
+      updated[secIdx].time = timeString ? String(timeString).trim() : null;
+      updateContentWithHistory(reconstructTextFromBlocks(updated));
+      showToast(timeString ? `Timestamp @ ${timeString}s asignado` : 'Timestamp removido');
+    }
   };
 
   // Merge section with previous
@@ -548,23 +612,41 @@ export default function SongLyricsVisualEditor({
     prevSec.lines.push(...currentSec.lines);
     updated.splice(secIdx, 1);
 
-    setDraftContent(reconstructTextFromBlocks(updated));
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
     setEditingSectionPopover(null);
     showToast(`Sección unida a [${prevSec.name}]`);
   };
 
-  // Add new section at a specific index
-  const handleAddSection = (sectionName = 'Estrofa', atIndex = visualSections.length) => {
+  // Add new section (Vocal or Instrumental)
+  const handleAddSection = (
+    sectionName = 'Estrofa',
+    atIndex = visualSections.length,
+    options = {}
+  ) => {
     if (!sectionName || !sectionName.trim()) return;
     const name = sectionName.trim();
     const updated = JSON.parse(JSON.stringify(visualSections));
-    const newSec = {
-      id: `sec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      name,
-      time: null,
-      lines: [
+
+    let initialLines = [];
+    if (options.isInstrumental) {
+      initialLines = [
+        {
+          id: `line_inst_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          prefixChords: [
+            { id: `p_${Math.random().toString(36).substring(2, 8)}`, chord: '𝄾' },
+            { id: `p_${Math.random().toString(36).substring(2, 8)}`, chord: '𝄾' },
+            { id: `p_${Math.random().toString(36).substring(2, 8)}`, chord: '𝄾' },
+            { id: `p_${Math.random().toString(36).substring(2, 8)}`, chord: '𝄾' },
+          ],
+          words: [],
+          suffixChords: [],
+        },
+      ];
+    } else {
+      initialLines = [
         {
           id: `line_new_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          prefixChords: [],
           words: [
             {
               id: `w_new_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -573,8 +655,16 @@ export default function SongLyricsVisualEditor({
               chord: null,
             },
           ],
+          suffixChords: [],
         },
-      ],
+      ];
+    }
+
+    const newSec = {
+      id: `sec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name,
+      time: null,
+      lines: initialLines,
     };
 
     if (atIndex <= 0) {
@@ -585,102 +675,41 @@ export default function SongLyricsVisualEditor({
       updated.splice(atIndex, 0, newSec);
     }
 
-    setDraftContent(reconstructTextFromBlocks(updated));
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
     setAddSectionPopover(null);
-    setNewSectionCustomName('');
     showToast(`Sección [${name}] añadida`);
-  };
-
-  // Reusable popover to pick or type a new section name
-  const renderAddSectionPopover = (atIndex, popoverId, positionClasses = 'top-8 left-1/2 -translate-x-1/2') => {
-    return (
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className={`absolute z-50 w-64 bg-white rounded-2xl border-2 border-stone-300 shadow-2xl p-3 text-left paper-texture space-y-2.5 animate-fade-in select-none ${positionClasses}`}
-      >
-        <div className="flex items-center justify-between border-b border-stone-200 pb-1.5">
-          <span className="text-xs font-serif font-bold text-stone-900 flex items-center gap-1.5">
-            <Tag className="w-3.5 h-3.5 text-amber-700" />
-            <span>Nueva Sección</span>
-          </span>
-          <button
-            type="button"
-            onClick={() => setAddSectionPopover(null)}
-            className="text-stone-400 hover:text-stone-700 p-0.5 cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        {/* Custom Name Input */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (newSectionCustomName.trim()) {
-              handleAddSection(newSectionCustomName, atIndex);
-            }
-          }}
-          className="flex items-center gap-1"
-        >
-          <input
-            type="text"
-            value={newSectionCustomName}
-            onChange={(e) => setNewSectionCustomName(e.target.value)}
-            placeholder="Nombre personalizado..."
-            autoFocus
-            className="flex-1 px-2 py-1 bg-stone-50 border border-stone-300 rounded text-xs font-serif text-stone-900 focus:outline-none focus:border-amber-600 placeholder:text-stone-400"
-          />
-          <button
-            type="submit"
-            disabled={!newSectionCustomName.trim()}
-            className="p-1 px-2 bg-amber-700 hover:bg-amber-800 disabled:opacity-40 text-white rounded text-xs font-sans font-bold cursor-pointer transition-colors"
-          >
-            + Crear
-          </button>
-        </form>
-
-        {/* Suggested Presets Grid */}
-        <div className="space-y-1">
-          <span className="text-[10px] font-mono text-stone-500 uppercase font-semibold">
-            O elegir sugerida:
-          </span>
-          <div className="grid grid-cols-2 gap-1 max-h-36 overflow-y-auto pr-1">
-            {SECTION_TYPES.map((st) => (
-              <button
-                key={st}
-                type="button"
-                onClick={() => handleAddSection(st, atIndex)}
-                className="px-2 py-1 rounded text-left text-[11px] font-serif transition-colors truncate cursor-pointer bg-stone-50 hover:bg-amber-100 text-stone-800 hover:text-amber-900 border border-stone-200/60"
-              >
-                {st}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
+    if (onSelectSection) onSelectSection(name);
   };
 
   // Delete section
   const handleDeleteSection = (secIdx) => {
     const updated = visualSections.filter((_, idx) => idx !== secIdx);
-    setDraftContent(reconstructTextFromBlocks(updated));
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
     setEditingSectionPopover(null);
     showToast('Sección eliminada');
   };
 
   return (
-    <div className={`flex-1 min-w-0 flex flex-col justify-between bg-[#fcf9f2] rounded-2xl md:rounded-r-none md:rounded-l-2xl shadow-[inset_-10px_0_15px_rgba(0,0,0,0.06)] border border-stone-300 md:border-r-0 overflow-hidden paper-texture p-5 sm:p-7 min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] max-h-[580px] xl:max-h-[640px] 2xl:max-h-[700px] relative z-10 ${className}`}>
+    <div
+      className={`flex-1 min-w-0 flex flex-col justify-between bg-[#fcf9f2] rounded-2xl md:rounded-r-none md:rounded-l-2xl shadow-[inset_-10px_0_15px_rgba(0,0,0,0.06)] border border-stone-300 md:border-r-0 overflow-hidden paper-texture p-4 sm:p-6 min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] max-h-[580px] xl:max-h-[640px] 2xl:max-h-[700px] relative z-10 ${className}`}
+    >
       {/* Top Margin Paper Stripe */}
       <div className="absolute top-0 right-0 bottom-0 w-10 bg-gradient-to-l from-stone-900/10 to-transparent pointer-events-none z-10" />
 
-      <div className="flex flex-col flex-1 min-h-0 space-y-3 overflow-hidden">
+      {/* Floating Toast Notification */}
+      {toastMessage && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 bg-stone-900/90 text-amber-200 px-3 py-1.5 rounded-xl shadow-lg text-xs font-sans font-bold border border-amber-500/40 pointer-events-none animate-fade-in">
+          {toastMessage}
+        </div>
+      )}
+
+      <div className="flex flex-col flex-1 min-h-0 space-y-2.5 overflow-hidden">
         {/* Editor Top Control Bar */}
         <div className="flex items-center justify-between pb-2 border-b border-stone-200 flex-wrap gap-2 flex-shrink-0">
           <div className="flex items-center gap-2">
             <span className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-200 text-amber-950 rounded-lg text-xs font-bold font-mono uppercase tracking-wider border border-amber-300 shadow-xs">
               <Sparkles className="w-3.5 h-3.5 text-amber-800" />
-              <span>Diseñador Visual de Letra</span>
+              <span>Diseñador Visual</span>
             </span>
 
             {/* Sync Mode Badge */}
@@ -695,10 +724,38 @@ export default function SongLyricsVisualEditor({
                 }`}
                 title="Alternar entre modo libre o sincronizado con marcas de tiempo"
               >
-                <Zap className={`w-3 h-3 ${isSyncMode ? 'text-amber-700 fill-amber-500' : 'text-stone-400'}`} />
-                <span>{isSyncMode ? 'Sincronizado' : 'Modo Libre'}</span>
+                <Zap
+                  className={`w-3 h-3 ${
+                    isSyncMode ? 'text-amber-700 fill-amber-500' : 'text-stone-400'
+                  }`}
+                />
+                <span className="hidden sm:inline">
+                  {isSyncMode ? 'Sincronizado' : 'Modo Libre'}
+                </span>
               </button>
             )}
+
+            {/* Undo / Redo Buttons */}
+            <div className="flex items-center gap-0.5 bg-stone-100 border border-stone-300 rounded-lg p-0.5 shadow-2xs">
+              <button
+                type="button"
+                onClick={handleUndo}
+                disabled={historyPast.length === 0}
+                className="p-1 rounded hover:bg-stone-200 disabled:opacity-30 disabled:hover:bg-transparent text-stone-700 cursor-pointer transition-colors"
+                title="Deshacer (Ctrl+Z)"
+              >
+                <Undo2 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleRedo}
+                disabled={historyFuture.length === 0}
+                className="p-1 rounded hover:bg-stone-200 disabled:opacity-30 disabled:hover:bg-transparent text-stone-700 cursor-pointer transition-colors"
+                title="Rehacer (Ctrl+Y)"
+              >
+                <Redo2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -706,11 +763,11 @@ export default function SongLyricsVisualEditor({
               <button
                 type="button"
                 onClick={onRestoreOriginal}
-                className="flex items-center gap-1 px-2.5 py-1 text-xs font-sans font-bold text-stone-600 hover:text-stone-900 bg-stone-100 hover:bg-stone-200 rounded-lg border border-stone-300 transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-2 py-1 text-xs font-sans font-bold text-stone-600 hover:text-stone-900 bg-stone-100 hover:bg-stone-200 rounded-lg border border-stone-300 transition-colors cursor-pointer"
                 title="Deshacer cambios y restaurar la letra original scrapeada"
               >
                 <RotateCcw className="w-3 h-3" />
-                <span>Restaurar</span>
+                <span className="hidden sm:inline">Restaurar</span>
               </button>
             )}
 
@@ -725,6 +782,55 @@ export default function SongLyricsVisualEditor({
           </div>
         </div>
 
+        {/* 🧲 Quick Chord Stamp Bar */}
+        {uniqueChords.length > 0 && !isInstrumental && (
+          <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50/70 border border-amber-200/80 rounded-xl text-xs font-sans flex-shrink-0 flex-wrap">
+            <div className="flex items-center gap-1 font-mono text-[11px] font-bold text-amber-900 pr-1 select-none">
+              <Stamp className="w-3.5 h-3.5 text-amber-700" />
+              <span className="hidden sm:inline">Modo Sello:</span>
+            </div>
+
+            <div className="flex items-center gap-1 flex-wrap">
+              {uniqueChords.map((ch) => {
+                const isActive = activeStampChord === ch;
+                return (
+                  <button
+                    key={ch}
+                    type="button"
+                    onClick={() => {
+                      const next = isActive ? null : ch;
+                      setActiveStampChord(next);
+                      if (next && onSelectChord) onSelectChord(next);
+                    }}
+                    className={`px-2 py-0.5 rounded-md font-mono font-bold text-xs transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-amber-700 text-white shadow-xs scale-105 ring-2 ring-amber-800'
+                        : 'bg-white hover:bg-amber-100 text-amber-950 border border-amber-300'
+                    }`}
+                    title={
+                      isActive
+                        ? `Sello activo: [${ch}]. Haz clic en cualquier palabra, previo o final para estamparlo`
+                        : `Activar sello [${ch}]`
+                    }
+                  >
+                    [{ch}]
+                  </button>
+                );
+              })}
+
+              {activeStampChord && (
+                <button
+                  type="button"
+                  onClick={() => setActiveStampChord(null)}
+                  className="px-1.5 py-0.5 text-[10px] text-stone-500 hover:text-stone-800 underline cursor-pointer ml-1"
+                >
+                  Desactivar
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Instrumental Banner & Add Lyrics Prompt */}
         {isInstrumental ? (
           <div className="p-6 bg-amber-50/80 rounded-2xl border-2 border-dashed border-amber-300 text-center space-y-3 shadow-inner my-auto">
@@ -736,7 +842,7 @@ export default function SongLyricsVisualEditor({
                 Canción Instrumental / Sin Letra Asignada
               </h4>
               <p className="text-xs font-sans text-stone-600 max-w-sm mx-auto">
-                Esta canción contiene únicamente compases rítmicos en el BeatGrid. Puedes tocarla instrumentalmente o añadirle la letra para acoplarle los acordes.
+                Esta canción contiene compases rítmicos en el BeatGrid. Puedes tocarla instrumentalmente o añadirle la letra para acoplarle los acordes.
               </p>
             </div>
             <button
@@ -750,7 +856,7 @@ export default function SongLyricsVisualEditor({
           </div>
         ) : (
           /* Visual Lyrics Canvas Matching Viewer's 90° Rotated Gutter */
-          <div className="flex-1 overflow-y-auto space-y-4 pr-1.5 min-h-0 max-h-[380px] xl:max-h-[440px] 2xl:max-h-[500px]">
+          <div className="flex-1 overflow-y-auto space-y-4 pr-1.5 min-h-0 max-h-[360px] xl:max-h-[420px] 2xl:max-h-[480px]">
             {/* Add Section at Top */}
             <div className="relative flex items-center justify-center pt-1 pb-1 select-none">
               <button
@@ -760,7 +866,6 @@ export default function SongLyricsVisualEditor({
                   setAddSectionPopover(
                     addSectionPopover?.id === 'top' ? null : { atIndex: 0, id: 'top' }
                   );
-                  setNewSectionCustomName('');
                 }}
                 className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-stone-100 hover:bg-amber-100 border border-dashed border-stone-300 hover:border-amber-400 text-stone-600 hover:text-amber-900 text-xs font-sans font-semibold transition-all shadow-2xs cursor-pointer hover:scale-105 active:scale-95"
               >
@@ -768,226 +873,161 @@ export default function SongLyricsVisualEditor({
                 <span>+ Añadir sección al inicio</span>
               </button>
 
-              {addSectionPopover?.id === 'top' &&
-                renderAddSectionPopover(0, 'top', 'top-9 left-1/2 -translate-x-1/2')}
+              {addSectionPopover?.id === 'top' && (
+                <AddSectionPopover
+                  atIndex={0}
+                  onAddSection={handleAddSection}
+                  onClose={() => setAddSectionPopover(null)}
+                  positionClasses="top-9 left-1/2 -translate-x-1/2"
+                />
+              )}
             </div>
 
             {visualSections.map((sec, secIdx) => {
               const hasNextSection = secIdx < visualSections.length - 1;
               const nextSec = hasNextSection ? visualSections[secIdx + 1] : null;
+              const isSectionActive =
+                activeSectionName &&
+                sec.name.toLowerCase() === activeSectionName.toLowerCase();
 
               return (
-                <div key={sec.id} className="relative group/section">
+                <div
+                  key={sec.id}
+                  className={`relative group/section my-2 transition-all ${
+                    isSectionActive ? 'bg-amber-100/30 rounded-xl' : ''
+                  }`}
+                >
                   <div className="flex items-stretch gap-3">
-                    {/* 90° Rotated Section Header in Left Gutter */}
-                    <div className="w-8 flex-shrink-0 flex flex-col items-center justify-start select-none py-1 border-r border-amber-900/15 relative">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingSectionPopover(editingSectionPopover === sec.id ? null : sec.id);
-                        }}
-                        style={{
-                          writingMode: 'vertical-rl',
-                          transform: 'rotate(180deg)',
-                        }}
-                        className="text-[11px] font-serif font-bold uppercase tracking-wider px-1.5 py-2 rounded-md shadow-xs transition-all whitespace-nowrap cursor-pointer text-amber-950 bg-amber-200/90 hover:bg-amber-300 border border-amber-300 hover:scale-105 active:scale-95"
-                        title={`Editar sección [${sec.name}]`}
-                      >
-                        {sec.name}
-                      </button>
+                    {/* 90° Rotated Section Header in Left Gutter with Duplicate / Reorder / Live Sync */}
+                    <SectionGutterHeader
+                      secIdx={secIdx}
+                      totalSections={visualSections.length}
+                      sec={sec}
+                      isOpen={editingSectionPopover === sec.id}
+                      onToggle={() =>
+                        setEditingSectionPopover(
+                          editingSectionPopover === sec.id ? null : sec.id
+                        )
+                      }
+                      onClose={() => setEditingSectionPopover(null)}
+                      onRenameSection={handleRenameSection}
+                      onDuplicateSection={handleDuplicateSection}
+                      onMoveSectionUp={handleMoveSectionUp}
+                      onMoveSectionDown={handleMoveSectionDown}
+                      onSetSectionTimestamp={handleSetSectionTimestamp}
+                      currentPlaybackTime={currentPlaybackTime}
+                      onMergeWithPrevSection={handleMergeWithPrevSection}
+                      onDeleteSection={handleDeleteSection}
+                    />
 
-                      {/* Section Options Popover */}
-                      {editingSectionPopover === sec.id && (
-                        <div
-                          onClick={(e) => e.stopPropagation()}
-                          className="absolute left-10 top-0 w-56 bg-white rounded-2xl border-2 border-stone-300 shadow-2xl p-3 z-50 text-left paper-texture space-y-2.5 animate-fade-in select-none"
-                        >
-                          <div className="flex items-center justify-between border-b border-stone-200 pb-1.5">
-                            <span className="text-xs font-serif font-bold text-stone-900">
-                              Opciones de Sección
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setEditingSectionPopover(null)}
-                              className="text-stone-400 hover:text-stone-700 p-0.5"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-
-                          {/* Quick Section Name Presets */}
-                          <div className="space-y-1">
-                            <span className="text-[10px] font-mono text-stone-500 uppercase font-semibold">
-                              Cambiar Nombre:
-                            </span>
-                            <div className="grid grid-cols-2 gap-1 max-h-32 overflow-y-auto pr-1">
-                              {SECTION_TYPES.map((st) => (
-                                <button
-                                  key={st}
-                                  type="button"
-                                  onClick={() => handleRenameSection(secIdx, st)}
-                                  className={`px-2 py-1 rounded text-left text-[11px] font-serif transition-colors truncate cursor-pointer ${
-                                    sec.name === st
-                                      ? 'bg-amber-600 text-white font-bold'
-                                      : 'bg-stone-50 hover:bg-amber-100 text-stone-800'
-                                  }`}
-                                >
-                                  {st}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Custom Name Input */}
-                          <form
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              if (popoverCustomName.trim()) {
-                                handleRenameSection(secIdx, popoverCustomName);
-                              }
-                            }}
-                            className="flex items-center gap-1 pt-1"
-                          >
-                            <input
-                              type="text"
-                              value={popoverCustomName}
-                              onChange={(e) => setPopoverCustomName(e.target.value)}
-                              placeholder="Otro nombre..."
-                              className="flex-1 px-2 py-1 bg-stone-50 border border-stone-300 rounded text-xs font-serif text-stone-900 focus:outline-none focus:border-amber-600"
-                            />
-                            <button
-                              type="submit"
-                              className="p-1 bg-amber-700 text-white rounded cursor-pointer"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                            </button>
-                          </form>
-
-                          {/* Merge & Delete Actions */}
-                          <div className="pt-2 border-t border-stone-200 space-y-1">
-                            {secIdx > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => handleMergeWithPrevSection(secIdx)}
-                                className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-xs font-sans text-stone-700 hover:bg-stone-100 cursor-pointer"
-                              >
-                                <Combine className="w-3.5 h-3.5 text-amber-700" />
-                                <span>Unir con sección anterior</span>
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteSection(secIdx)}
-                              className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-xs font-sans text-rose-700 hover:bg-rose-50 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                              <span>Eliminar esta sección</span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Section Verse Lines & Magnetic Chord Drop Slots */}
-                    <div className="flex-1 min-w-0 space-y-1.5 py-0.5">
+                    {/* Section Verse Lines & Chord Drop Slots */}
+                    <div className="flex-1 min-w-0 space-y-1 py-0.5">
                       {sec.lines.map((line, lineIdx) => {
-                        const isEmpty = line.words.length === 0;
+                        const isEmpty =
+                          (!line.words || line.words.length === 0) &&
+                          (!line.prefixChords || line.prefixChords.length === 0) &&
+                          (!line.suffixChords || line.suffixChords.length === 0);
 
                         if (isEmpty) {
                           return (
                             <div
                               key={line.id}
-                              className="h-3.5 flex items-center group/line relative"
+                              className="h-3 flex items-center group/line relative"
                             >
-                              <div className="w-full border-b border-dashed border-stone-200/60" />
+                              <div className="w-full border-b border-dashed border-stone-200/50" />
                             </div>
                           );
                         }
 
+                        const lineKey = `${secIdx}_${lineIdx}`;
+                        const isLineHighlighted = highlightedLineKey === lineKey;
+
                         return (
                           <div
                             key={line.id}
-                            className="flex items-end flex-wrap gap-y-2 group/line relative py-0.5 rounded-lg transition-colors hover:bg-amber-50/50"
+                            onMouseEnter={() => setHighlightedLineKey(lineKey)}
+                            onMouseLeave={() => setHighlightedLineKey(null)}
+                            className={`flex flex-wrap items-end my-1 leading-none group/line relative py-0.5 rounded-lg transition-colors ${
+                              isLineHighlighted
+                                ? 'bg-amber-100/50'
+                                : 'hover:bg-amber-50/40'
+                            }`}
                           >
-                            {/* Words with Magnetic Upper Chord Drop Slots */}
-                            <div className="flex items-end flex-wrap flex-1 min-w-0">
-                              {line.words.map((item) => {
-                                if (item.type === 'space') {
-                                  return (
-                                    <span key={Math.random()} className="w-1.5 inline-block">
-                                      &nbsp;
-                                    </span>
-                                  );
-                                }
+                            {/* 1. Pickup / Prefix Chords Slot (ANTES de la frase) */}
+                            <LinePrefixChords
+                              secIdx={secIdx}
+                              lineIdx={lineIdx}
+                              prefixChords={line.prefixChords || []}
+                              activeStampChord={activeStampChord}
+                              onAddPrefixChord={handleAddPrefixChord}
+                              onRemovePrefixChord={handleRemovePrefixChord}
+                              onOpenPicker={setSelectedWordForPicker}
+                              onAssignChord={handleAssignChordToWord}
+                              isSectionSynced={Boolean(sec.time)}
+                            />
 
-                                const isHoveredDrop = activeDropWordId === item.id;
+                            {/* 2. Middle Words with Upper Chord Drop Slots and Syllable Splitter */}
+                            {line.words && line.words.length > 0 ? (
+                              line.words.map((item, wIdx) => (
+                                <WordChordDropSlot
+                                  key={item.id || Math.random()}
+                                  item={item}
+                                  secIdx={secIdx}
+                                  lineIdx={lineIdx}
+                                  wordIdx={wIdx}
+                                  totalWords={line.words.length}
+                                  activeDropWordId={activeDropWordId}
+                                  activeStampChord={activeStampChord}
+                                  onDragOver={handleDragOverWord}
+                                  onDragLeave={handleDragLeaveWord}
+                                  onDrop={handleDropOnWord}
+                                  onAssignChord={handleAssignChordToWord}
+                                  onOpenPicker={setSelectedWordForPicker}
+                                  onUpdateWordText={handleUpdateWordText}
+                                  onSplitWord={handleSplitWord}
+                                  onMergeWords={handleMergeWords}
+                                  isSectionSynced={Boolean(sec.time)}
+                                />
+                              ))
+                            ) : (
+                              <span className="font-mono text-xs text-amber-900/60 italic select-none py-1">
+                                [Compás Instrumental]
+                              </span>
+                            )}
 
-                                return (
-                                  <div
-                                    key={item.id}
-                                    className="inline-flex flex-col items-start justify-end relative group/word flex-shrink-0"
-                                    onDragOver={(e) => handleDragOverWord(e, item.id)}
-                                    onDragLeave={handleDragLeaveWord}
-                                    onDrop={(e) => handleDropOnWord(e, secIdx, lineIdx, item.id)}
-                                  >
-                                    {/* Chord Slot positioned precisely OVER the word */}
-                                    <div className="h-5 flex items-center mb-0.5">
-                                      {item.chord ? (
-                                        <div
-                                          className="inline-flex items-center gap-0.5 bg-amber-200 text-amber-950 px-1.5 py-0.5 rounded border border-amber-400 font-mono font-bold text-xs shadow-xs transition-transform hover:scale-105 select-none"
-                                          title={`Acorde [${item.chord}]. Clic para quitar.`}
-                                        >
-                                          <span>{item.chord}</span>
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleAssignChordToWord(secIdx, lineIdx, item.id, null);
-                                            }}
-                                            className="p-0.5 hover:text-rose-700 cursor-pointer ml-0.5"
-                                          >
-                                            <X className="w-2.5 h-2.5" />
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <button
-                                          type="button"
-                                          onClick={() => setSelectedWordForPicker({ secIdx, lineIdx, wordId: item.id })}
-                                          className={`h-4 min-w-[20px] px-1 rounded flex items-center justify-center transition-all cursor-pointer ${
-                                            isHoveredDrop
-                                              ? 'bg-amber-300 border-2 border-dashed border-amber-700 scale-110 shadow-sm'
-                                              : 'opacity-0 group-hover/word:opacity-100 border border-dashed border-amber-300 hover:border-amber-500 hover:bg-amber-100/70 text-amber-800'
-                                          }`}
-                                          title="Asignar acorde a esta palabra"
-                                        >
-                                          <Plus className="w-2.5 h-2.5" />
-                                        </button>
-                                      )}
-                                    </div>
-
-                                    {/* Word / Syllable Text */}
-                                    <span
-                                      className={`font-serif text-sm leading-snug px-0.5 rounded transition-colors text-stone-900 ${
-                                        isHoveredDrop ? 'bg-amber-200 font-bold' : ''
-                                      }`}
-                                    >
-                                      {item.text}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                            </div>
+                            {/* 3. Outro / Suffix Chords Slot (DESPUÉS de la frase) */}
+                            <LineSuffixChords
+                              secIdx={secIdx}
+                              lineIdx={lineIdx}
+                              suffixChords={line.suffixChords || []}
+                              activeStampChord={activeStampChord}
+                              onAddSuffixChord={handleAddSuffixChord}
+                              onRemoveSuffixChord={handleRemoveSuffixChord}
+                              onOpenPicker={setSelectedWordForPicker}
+                              isSectionSynced={Boolean(sec.time)}
+                            />
 
                             {/* Quick Line Actions on Right Gutter */}
-                            <div className="opacity-0 group-hover/line:opacity-100 transition-opacity flex items-center gap-1 pl-2 select-none flex-shrink-0">
+                            <div className="opacity-0 group-hover/line:opacity-100 transition-opacity flex items-center gap-0.5 pl-2 select-none flex-shrink-0 ml-auto">
+                              <button
+                                type="button"
+                                onClick={() => handleAddInstrumentalLine(secIdx, lineIdx)}
+                                className="p-0.5 rounded bg-stone-100 hover:bg-amber-100 text-stone-600 hover:text-amber-900 transition-colors cursor-pointer"
+                                title="Insertar compás instrumental aquí"
+                              >
+                                <Music2 className="w-3 h-3" />
+                              </button>
+
                               {(lineIdx > 0 || secIdx > 0) && (
                                 <button
                                   type="button"
                                   onClick={() => handleMoveLineUp(secIdx, lineIdx)}
-                                  className="p-1 rounded bg-stone-100 hover:bg-amber-100 text-stone-600 hover:text-amber-900 transition-colors cursor-pointer"
-                                  title={lineIdx === 0 ? `Pasar este verso a [${visualSections[secIdx - 1]?.name}]` : 'Subir este verso'}
+                                  className="p-0.5 rounded bg-stone-100 hover:bg-amber-100 text-stone-600 hover:text-amber-900 transition-colors cursor-pointer"
+                                  title={
+                                    lineIdx === 0
+                                      ? `Pasar este verso a [${visualSections[secIdx - 1]?.name}]`
+                                      : 'Subir este verso'
+                                  }
                                 >
                                   <ArrowUp className="w-3 h-3" />
                                 </button>
@@ -997,8 +1037,12 @@ export default function SongLyricsVisualEditor({
                                 <button
                                   type="button"
                                   onClick={() => handleMoveLineDown(secIdx, lineIdx)}
-                                  className="p-1 rounded bg-stone-100 hover:bg-amber-100 text-stone-600 hover:text-amber-900 transition-colors cursor-pointer"
-                                  title={lineIdx === sec.lines.length - 1 ? `Pasar este verso a [${nextSec?.name}]` : 'Bajar este verso'}
+                                  className="p-0.5 rounded bg-stone-100 hover:bg-amber-100 text-stone-600 hover:text-amber-900 transition-colors cursor-pointer"
+                                  title={
+                                    lineIdx === sec.lines.length - 1
+                                      ? `Pasar este verso a [${nextSec?.name}]`
+                                      : 'Bajar este verso'
+                                  }
                                 >
                                   <ArrowDown className="w-3 h-3" />
                                 </button>
@@ -1007,8 +1051,10 @@ export default function SongLyricsVisualEditor({
                               {lineIdx > 0 && (
                                 <button
                                   type="button"
-                                  onClick={() => handleSplitSectionAtLine(secIdx, lineIdx, 'Estrofa')}
-                                  className="p-1 rounded bg-stone-100 hover:bg-amber-100 text-stone-600 hover:text-amber-900 transition-colors cursor-pointer"
+                                  onClick={() =>
+                                    handleSplitSectionAtLine(secIdx, lineIdx, 'Estrofa')
+                                  }
+                                  className="p-0.5 rounded bg-stone-100 hover:bg-amber-100 text-stone-600 hover:text-amber-900 transition-colors cursor-pointer"
                                   title="Dividir en una nueva sección a partir de aquí"
                                 >
                                   <Scissors className="w-3 h-3" />
@@ -1021,68 +1067,18 @@ export default function SongLyricsVisualEditor({
                     </div>
                   </div>
 
-                  {/* Interactive Section Boundary Divider Bar (Between this section and next) */}
+                  {/* Interactive Section Boundary Divider Bar */}
                   {hasNextSection && (
-                    <div className="my-2.5 pl-11 pr-2 flex items-center justify-between gap-2 select-none group/boundary relative">
-                      <div className="h-px bg-amber-900/15 flex-1 group-hover/boundary:bg-amber-500/50 transition-colors" />
-
-                      {/* Boundary Resizing Controls & Add Section Button */}
-                      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-stone-100 group-hover/boundary:bg-amber-100 border border-stone-200 group-hover/boundary:border-amber-300 transition-all text-[10px] font-mono text-stone-600 shadow-2xs">
-                        <button
-                          type="button"
-                          onClick={() => handleMoveBoundaryUp(secIdx)}
-                          disabled={sec.lines.length === 0}
-                          className="hover:text-amber-900 hover:bg-amber-200/60 p-0.5 rounded cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                          title={`Mover límite hacia arriba (contraer [${sec.name}])`}
-                        >
-                          <ArrowUp className="w-3 h-3" />
-                        </button>
-
-                        <span className="px-0.5 font-semibold text-stone-700">
-                          ↕ Límite
-                        </span>
-
-                        <button
-                          type="button"
-                          onClick={() => handleMoveBoundaryDown(secIdx)}
-                          disabled={!nextSec || nextSec.lines.length === 0}
-                          className="hover:text-amber-900 hover:bg-amber-200/60 p-0.5 rounded cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                          title={`Mover límite hacia abajo (expandir [${sec.name}])`}
-                        >
-                          <ArrowDown className="w-3 h-3" />
-                        </button>
-
-                        <span className="text-stone-300 select-none">|</span>
-
-                        {/* Add section between trigger */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setAddSectionPopover(
-                              addSectionPopover?.id === `between_${secIdx}`
-                                ? null
-                                : { atIndex: secIdx + 1, id: `between_${secIdx}` }
-                            );
-                            setNewSectionCustomName('');
-                          }}
-                          className="hover:text-amber-950 hover:bg-amber-200/80 px-1 py-0.5 rounded cursor-pointer flex items-center gap-1 font-sans text-amber-900 font-bold transition-colors"
-                          title="Insertar una nueva sección aquí"
-                        >
-                          <Plus className="w-3 h-3 text-amber-700" />
-                          <span>+ Sección</span>
-                        </button>
-                      </div>
-
-                      <div className="h-px bg-amber-900/15 flex-1 group-hover/boundary:bg-amber-500/50 transition-colors" />
-
-                      {addSectionPopover?.id === `between_${secIdx}` &&
-                        renderAddSectionPopover(
-                          secIdx + 1,
-                          `between_${secIdx}`,
-                          'top-8 left-1/2 -translate-x-1/2'
-                        )}
-                    </div>
+                    <SectionBoundaryDivider
+                      secIdx={secIdx}
+                      sec={sec}
+                      nextSec={nextSec}
+                      onMoveBoundaryUp={handleMoveBoundaryUp}
+                      onMoveBoundaryDown={handleMoveBoundaryDown}
+                      addSectionPopover={addSectionPopover}
+                      setAddSectionPopover={setAddSectionPopover}
+                      onAddSection={handleAddSection}
+                    />
                   )}
                 </div>
               );
@@ -1099,12 +1095,11 @@ export default function SongLyricsVisualEditor({
                       ? null
                       : { atIndex: visualSections.length, id: 'bottom' }
                   );
-                  setNewSectionCustomName('');
                 }}
                 className="px-3.5 py-1.5 bg-amber-100/90 hover:bg-amber-200/90 border border-amber-300 rounded-xl text-xs font-sans font-bold text-amber-950 flex items-center gap-1.5 shadow-xs transition-all cursor-pointer hover:scale-105 active:scale-95"
               >
                 <Plus className="w-3.5 h-3.5 text-amber-800" />
-                <span>+ Añadir Sección al Final</span>
+                <span>+ Añadir Sección</span>
               </button>
 
               <button
@@ -1125,44 +1120,51 @@ export default function SongLyricsVisualEditor({
               </button>
               <button
                 type="button"
-                onClick={() => handleAddSection('Puente', visualSections.length)}
-                className="px-2.5 py-1.5 bg-white hover:bg-stone-50 border border-stone-300 rounded-xl text-xs font-sans font-semibold text-stone-700 flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                onClick={() =>
+                  handleAddSection('Solo', visualSections.length, { isInstrumental: true })
+                }
+                className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl text-xs font-sans font-semibold text-amber-950 flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
               >
-                <Plus className="w-3 h-3 text-amber-700" />
-                <span>Puente</span>
+                <Music2 className="w-3 h-3 text-amber-700" />
+                <span>Solo (Inst.)</span>
               </button>
 
-              {addSectionPopover?.id === 'bottom' &&
-                renderAddSectionPopover(
-                  visualSections.length,
-                  'bottom',
-                  'top-12 left-11'
-                )}
+              {addSectionPopover?.id === 'bottom' && (
+                <AddSectionPopover
+                  atIndex={visualSections.length}
+                  onAddSection={handleAddSection}
+                  onClose={() => setAddSectionPopover(null)}
+                  positionClasses="top-12 left-11"
+                />
+              )}
             </div>
           </div>
         )}
       </div>
 
       {/* Bottom Actions Bar */}
-      <div className="pt-3 mt-3 border-t border-stone-200 flex items-center justify-between gap-2 flex-wrap flex-shrink-0">
-        <div className="text-[11px] font-sans text-stone-500">
-          💡 <span className="font-semibold">Arrastra un acorde</span> desde el BeatGrid derecho y suéltalo sobre una palabra.
+      <div className="pt-3 mt-2 border-t border-stone-200 flex items-center justify-between gap-2 flex-wrap flex-shrink-0">
+        <div className="text-[11px] font-sans text-stone-500 flex items-center gap-2 flex-wrap">
+          <span>
+            💡 <span className="font-semibold">Arrastra un acorde</span>, usa{' '}
+            <span className="font-semibold text-amber-900">+ Previo / + Final</span> para acordes
+            fuera de la frase, o <span className="font-semibold">✂️</span> para sílabas.
+          </span>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onCancel}
-            className="px-3 py-1.5 rounded-xl border border-stone-300 bg-white hover:bg-stone-50 text-stone-700 text-xs font-bold font-sans transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl border border-stone-300 hover:bg-stone-100 text-stone-700 text-xs font-bold font-sans transition-colors cursor-pointer"
           >
             Cancelar
           </button>
-
           <button
             type="button"
             onClick={onSave}
             disabled={isSaving}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-amber-800 hover:bg-amber-900 text-white text-xs font-bold font-sans shadow-md transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+            className="px-4 py-1.5 bg-gradient-to-r from-amber-700 to-amber-800 hover:from-amber-600 hover:to-amber-700 text-white rounded-xl text-xs font-bold font-sans shadow-md flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
           >
             <Save className="w-3.5 h-3.5" />
             <span>{isSaving ? 'Guardando...' : 'Guardar Arreglo'}</span>
@@ -1170,169 +1172,28 @@ export default function SongLyricsVisualEditor({
         </div>
       </div>
 
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="absolute bottom-16 right-5 bg-stone-900/90 text-white text-[11px] font-sans px-3 py-1.5 rounded-xl shadow-xl animate-fade-in pointer-events-none z-50">
-          {toastMessage}
-        </div>
-      )}
-
-      {/* Quick Chord Picker Modal for Word Click */}
+      {/* Quick Chord Picker Modal */}
       {selectedWordForPicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
-          <div className="w-full max-w-xs bg-white rounded-2xl border border-stone-300 p-4 shadow-2xl space-y-3 paper-texture">
-            <div className="flex items-center justify-between border-b border-stone-200 pb-2">
-              <span className="text-xs font-bold font-sans text-stone-800">Seleccionar Acorde:</span>
-              <button
-                type="button"
-                onClick={() => setSelectedWordForPicker(null)}
-                className="text-stone-400 hover:text-stone-700 p-0.5"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-4 gap-1.5">
-              {uniqueChords.map((ch) => (
-                <button
-                  key={ch}
-                  type="button"
-                  onClick={() => {
-                    handleAssignChordToWord(
-                      selectedWordForPicker.secIdx,
-                      selectedWordForPicker.lineIdx,
-                      selectedWordForPicker.wordId,
-                      ch
-                    );
-                    setSelectedWordForPicker(null);
-                  }}
-                  className="p-1.5 bg-stone-100 hover:bg-amber-100 text-amber-950 rounded-lg text-xs font-mono font-bold border border-stone-200 transition-colors"
-                >
-                  [{ch}]
-                </button>
-              ))}
-            </div>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (customChordInput.trim()) {
-                  handleAssignChordToWord(
-                    selectedWordForPicker.secIdx,
-                    selectedWordForPicker.lineIdx,
-                    selectedWordForPicker.wordId,
-                    customChordInput.trim()
-                  );
-                  setCustomChordInput('');
-                  setSelectedWordForPicker(null);
-                }
-              }}
-              className="flex items-center gap-1.5 pt-1"
-            >
-              <input
-                type="text"
-                value={customChordInput}
-                onChange={(e) => setCustomChordInput(e.target.value)}
-                placeholder="Otro (ej: F#m7)..."
-                className="flex-1 px-2.5 py-1 bg-stone-50 border border-stone-300 rounded-lg text-xs font-mono text-stone-900 focus:outline-none focus:border-amber-600"
-              />
-              <button
-                type="submit"
-                className="p-1.5 bg-amber-700 text-white rounded-lg cursor-pointer"
-              >
-                <Check className="w-3.5 h-3.5" />
-              </button>
-            </form>
-          </div>
-        </div>
+        <QuickChordPickerModal
+          selectedWord={selectedWordForPicker}
+          uniqueChords={uniqueChords}
+          onAssignChord={handleAssignChordToWord}
+          onAddPrefixChord={handleAddPrefixChord}
+          onAddSuffixChord={handleAddSuffixChord}
+          onClose={() => setSelectedWordForPicker(null)}
+        />
       )}
 
-      {/* Modal: Add Lyrics to Instrumental Song */}
-      {isAddLyricsModalOpen && typeof document !== 'undefined' && createPortal(
-        <AnimatePresence>
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 sm:p-6 select-none">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsAddLyricsModalOpen(false)}
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            />
-
-            <motion.div
-              initial={{ opacity: 0, scale: 0.92, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.92, y: 15 }}
-              className="relative w-full max-w-xl bg-[#fcf9f2] rounded-3xl border-4 border-[#35251d] p-6 sm:p-7 shadow-2xl space-y-4 paper-texture z-10"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between border-b border-stone-300/80 pb-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2.5 bg-amber-100/90 rounded-2xl text-amber-900 shadow-xs">
-                    <FileText className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-serif font-black text-xl text-stone-900">
-                      Pegar o Escribir Letra
-                    </h3>
-                    <p className="text-xs font-sans text-stone-600 mt-0.5">
-                      Ingresa los versos para estructurarlos en palabras con ranuras de acordes
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsAddLyricsModalOpen(false)}
-                  className="text-stone-400 hover:text-stone-700 p-1.5 rounded-full hover:bg-stone-200/60 transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2.5 p-3 bg-amber-50/90 border border-amber-200/90 rounded-2xl text-amber-950 text-xs font-sans shadow-2xs">
-                <div className="p-1.5 bg-amber-200/70 rounded-xl text-amber-900 flex-shrink-0">
-                  <Tag className="w-4 h-4" />
-                </div>
-                <div className="leading-snug">
-                  <span className="font-bold text-amber-900">💡 Asignar Secciones: </span>
-                  Selecciona una parte o estrofa del texto y haz <strong>clic derecho</strong> sobre la selección para asignarle una sección.
-                </div>
-              </div>
-
-              <div className="relative">
-                <textarea
-                  ref={lyricsTextareaRef}
-                  value={newLyricsInput}
-                  onChange={(e) => setNewLyricsInput(e.target.value)}
-                  onContextMenu={handleTextareaContextMenu}
-                  placeholder="Pega la letra completa aquí...&#10;&#10;Ejemplo:&#10;[Intro]&#10;Ahí va el capitán Beto...&#10;&#10;[Estrofa 2]&#10;Ya lleva quince años en su periplo..."
-                  rows={8}
-                  className="w-full p-4 bg-white/80 border-2 border-stone-300 rounded-2xl font-serif text-sm text-stone-900 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-700 shadow-inner paper-texture"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-300/80">
-                <button
-                  type="button"
-                  onClick={() => setIsAddLyricsModalOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-stone-300 bg-white hover:bg-stone-100 text-stone-700 text-xs font-bold font-sans transition-colors cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleApplyAddedLyrics}
-                  disabled={!newLyricsInput.trim()}
-                  className="px-5 py-2 rounded-xl bg-amber-800 hover:bg-amber-900 text-white text-xs font-bold font-sans shadow-md transition-all cursor-pointer active:scale-95 disabled:opacity-40"
-                >
-                  Estructurar y Aplicar Letra
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        </AnimatePresence>,
-        document.body
-      )}
+      {/* Add Lyrics Modal (For converting instrumental songs to lyric songs) */}
+      <AddLyricsModal
+        isOpen={isAddLyricsModalOpen}
+        onClose={() => setIsAddLyricsModalOpen(false)}
+        onSaveLyrics={(newLyrics) => {
+          updateContentWithHistory(newLyrics);
+          setIsAddLyricsModalOpen(false);
+          showToast('Letra agregada con éxito');
+        }}
+      />
     </div>
   );
 }

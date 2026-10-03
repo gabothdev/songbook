@@ -135,6 +135,15 @@ export function useSetlistManager({ onSelectSong = null, onUpdateSelectedSong = 
               id: String(s.id),
               title: s.title,
               artist: s.artist,
+              artistImage: s.artistImage || null,
+              albumCover: s.albumCover || null,
+              album: s.album || null,
+              releaseYear: s.releaseYear || null,
+              versionType: s.versionType || 'studio',
+              versionDetails: s.versionDetails || null,
+              artists: s.artists || [],
+              isCustom: Boolean(s.isCustom),
+              originalContent: s.originalContent || null,
               key: uniqueChords[0] || 'C',
               bpm: parsedBpm,
               timeSignature: parsedTimeSig,
@@ -168,6 +177,14 @@ export function useSetlistManager({ onSelectSong = null, onUpdateSelectedSong = 
                     id: String(ss.id),
                     title: ss.title,
                     artist: ss.artist,
+                    artistImage: ss.artistImage || null,
+                    albumCover: ss.albumCover || null,
+                    album: ss.album || null,
+                    releaseYear: ss.releaseYear || null,
+                    versionType: ss.versionType || 'studio',
+                    versionDetails: ss.versionDetails || null,
+                    artists: ss.artists || [],
+                    isCustom: Boolean(ss.isCustom),
                     key: uChords[0] || 'C',
                     content: ss.content,
                     youtubeId: ss.youtubeId,
@@ -282,8 +299,38 @@ export function useSetlistManager({ onSelectSong = null, onUpdateSelectedSong = 
     }
   };
 
-  // Add song to setlist
+  // Add song or score to setlist
   const handleAddSongToSetlist = async (setlistName, song) => {
+    const isScore = Boolean(
+      song.isScore ||
+      song.type === 'score' ||
+      song.type === 'tango_archive' ||
+      song.songsterrId ||
+      song.tangoId ||
+      song.pages
+    );
+
+    let contentToSave = song.content || '';
+    if (isScore && !contentToSave.startsWith('[SCORE_SHEET]')) {
+      const payload = {
+        isScore: true,
+        type: song.type || (song.songsterrId ? 'score' : 'tango_archive'),
+        songsterrId: song.songsterrId,
+        tangoId: song.tangoId,
+        composer: song.composer || song.artist,
+        rhythm: song.rhythm,
+        pages: song.pages,
+        recordings: song.recordings,
+        tracks: song.tracks,
+        activePartId: song.activePartId,
+        youtubeId: song.youtubeId,
+        difficulty: song.difficulty
+      };
+      contentToSave = `[SCORE_SHEET]${JSON.stringify(payload)}`;
+    }
+
+    const songId = song.id || (song.songsterrId ? `st_${song.songsterrId}` : `tango_${song.tangoId || Date.now()}`);
+
     setSetlists((prev) =>
       prev.map((sl) => {
         if (sl.name === setlistName) {
@@ -293,15 +340,21 @@ export function useSetlistManager({ onSelectSong = null, onUpdateSelectedSong = 
             songs: [
               ...currentSongs,
               {
-                id: song.id,
+                id: String(songId),
                 title: song.title,
-                artist: song.artist,
-                key: song.key || 'C',
-                content: song.content,
+                artist: song.artist || song.composer || 'Artista',
+                key: isScore ? (song.rhythm || 'Score') : (song.key || 'C'),
+                content: contentToSave,
                 youtubeId: song.youtubeId,
                 syncData: song.syncData,
                 transpose: song.transpose ?? 0,
                 chordVariants: song.chordVariants || null,
+                isScore,
+                type: song.type || (song.songsterrId ? 'score' : (isScore ? 'tango_archive' : undefined)),
+                songsterrId: song.songsterrId,
+                tangoId: song.tangoId,
+                pages: song.pages,
+                recordings: song.recordings
               },
             ],
           };
@@ -314,8 +367,8 @@ export function useSetlistManager({ onSelectSong = null, onUpdateSelectedSong = 
       await addSongToSetlist({
         setlistName,
         title: song.title,
-        artist: song.artist,
-        content: song.content || '',
+        artist: song.artist || song.composer || 'Artista',
+        content: contentToSave,
         youtubeId: song.youtubeId || '',
         syncData: song.syncData || '',
         transpose: song.transpose ?? 0,
@@ -475,7 +528,7 @@ export function useSetlistManager({ onSelectSong = null, onUpdateSelectedSong = 
       },
       onExitStage: (callback = null) => {
         setStageModeSetlist(null);
-        if (callback) {
+        if (typeof callback === 'function') {
           callback();
         }
       },

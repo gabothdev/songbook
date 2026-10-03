@@ -85,17 +85,27 @@ function formatCompasesToText(compases) {
         textOutput += `${rebuiltLine}\n`;
       }
     } else {
-      // Caso A: Línea con solo acordes
-      const formatCompasOnly = (c) => {
-        const mainChord = c.acordes.find(ch => ch && ch !== '𝄾' && ch !== '𝄽');
-        return mainChord ? `[${mainChord}]` : '[𝄾]';
+      // Caso A: Línea con solo acordes. Preservar TODOS los acordes en cualquier tiempo del compás.
+      const formatCompasChords = (c) => {
+        if (!c || !c.acordes) return '';
+        const distinct = [];
+        let lastCh = null;
+        c.acordes.forEach(ch => {
+          const clean = (ch || '').trim();
+          if (!clean) return;
+          if (clean !== lastCh) {
+            distinct.push(clean);
+            lastCh = clean;
+          }
+        });
+        if (distinct.length === 0) return '[𝄾]';
+        return distinct.map(ch => `[${ch}]`).join(' ');
       };
       
-      textOutput += `${formatCompasOnly(compas1)} `;
-      if (compas2) {
-        textOutput += `${formatCompasOnly(compas2)} `;
-      }
-      textOutput += '\n';
+      const str1 = formatCompasChords(compas1);
+      const str2 = compas2 ? formatCompasChords(compas2) : '';
+      
+      textOutput += str2 ? `${str1}   ${str2}\n` : `${str1}\n`;
     }
     
     i += compas2 ? 2 : 1;
@@ -311,24 +321,28 @@ router.post('/transcribe/youtube', async (req, res) => {
     let songTitle = 'Canción de YouTube';
     let songArtist = 'Artista';
 
-    // 2. Si el método es chordify, ejecutar exclusivamente scraping de acordes y BeatGrid
+    // 2. Si el método es chordify, ejecutar scraping de acordes y BeatGrid
     if (method === 'chordify') {
-      console.log(`[IA Transcribe] Ejecutando scraper de Chordify...`);
-      const chordifyResult = await getChordifyBeatGrid(youtubeId);
-      bpm = chordifyResult.bpm || 120;
-      compases = chordifyResult.compases || [];
-      barLength = chordifyResult.barLength || 4;
-      if (chordifyResult.title) songTitle = chordifyResult.title;
-      if (chordifyResult.artist) songArtist = chordifyResult.artist;
-      if (chordifyResult.leadSheetText) {
-        customText = chordifyResult.leadSheetText;
+      try {
+        console.log(`[IA Transcribe] Ejecutando scraper de Chordify...`);
+        const chordifyResult = await getChordifyBeatGrid(youtubeId);
+        bpm = chordifyResult.bpm || 120;
+        compases = chordifyResult.compases || [];
+        barLength = chordifyResult.barLength || 4;
+        if (chordifyResult.title) songTitle = chordifyResult.title;
+        if (chordifyResult.artist) songArtist = chordifyResult.artist;
+        if (chordifyResult.leadSheetText) {
+          customText = chordifyResult.leadSheetText;
+        }
+        scrapeSuccess = true;
+        console.log(`[IA Transcribe] Scraping de Chordify completado con éxito. BPM: ${bpm}, Título: ${songTitle}`);
+      } catch (chordifyErr) {
+        console.warn(`[IA Transcribe] Scraping de Chordify falló: ${chordifyErr.message}. Activando fallback de transcripción...`);
       }
-      scrapeSuccess = true;
-      console.log(`[IA Transcribe] Scraping de Chordify completado con éxito. BPM: ${bpm}, Título: ${songTitle}`);
     }
 
     // 3. Fallback de metadatos si no se obtuvieron de Chordify
-    if (songTitle === 'Canción de YouTube') {
+    if (!songTitle || songTitle === 'Canción de YouTube') {
       const metadata = await getYouTubeMetadata(youtubeId);
       if (metadata.title) songTitle = metadata.title;
       if (metadata.artist) songArtist = metadata.artist;
@@ -358,6 +372,19 @@ router.post('/transcribe/youtube', async (req, res) => {
 
       bpm = result.bpm;
       compases = result.compases;
+      scrapeSuccess = true;
+    }
+
+    // 4b. Fallback rítmico si compases está vacío
+    if (!compases || compases.length === 0) {
+      console.log(`[IA Transcribe] Generando cuadrícula rítmica estimada para "${songTitle}"`);
+      compases = Array.from({ length: 16 }, (_, idx) => ({
+        id: idx + 1,
+        acordes: ['𝄾', '𝄾', '𝄾', '𝄾'],
+        beatTimes: [idx * 2, idx * 2 + 0.5, idx * 2 + 1.0, idx * 2 + 1.5],
+        seccion: idx < 4 ? 'Intro' : `Parte ${Math.floor((idx - 4) / 4) + 1}`,
+        ...(idx % 4 === 0 ? { secTime: idx * 2 } : {})
+      }));
     }
 
     const bpmHeader = `[BPM @ ${bpm}]\n[Beats @ ${barLength}]\n\n`;
@@ -367,6 +394,15 @@ router.post('/transcribe/youtube', async (req, res) => {
     let song = await prisma.song.findFirst({
       where: { youtubeId }
     });
+
+    if (!song && songTitle && songArtist && songTitle !== 'Canción de YouTube') {
+      song = await prisma.song.findFirst({
+        where: {
+          title: { equals: songTitle.trim() },
+          artist: { equals: songArtist.trim() }
+        }
+      });
+    }
 
     if (song) {
       song = await prisma.song.update({

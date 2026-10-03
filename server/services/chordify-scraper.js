@@ -9,13 +9,16 @@ export async function getChordifyBeatGrid(youtubeId) {
   console.log(`[Chordify Scraper] Iniciando scraping para youtubeId: ${youtubeId}`);
   const chromePath = getChromeExecutablePath();
   const browser = await puppeteer.launch({
-    headless: 'new',
+    headless: false,
     ...(chromePath ? { executablePath: chromePath } : {}),
-    args: PUPPETEER_ARGS
+    args: [
+      ...PUPPETEER_ARGS,
+      '--window-position=-2400,-2400',
+      '--window-size=1280,800'
+    ]
   });
   
   const page = await browser.newPage();
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
   
   const url = `https://chordify.net/chords/youtube:${youtubeId}`;
   console.log(`[Chordify Scraper] Navegando a: ${url}`);
@@ -60,8 +63,25 @@ export async function getChordifyBeatGrid(youtubeId) {
     }
     
     const chordsObj = chordsData.chords.value;
-    const songTitle = chordsData.title || chordsObj.title || chordsData.meta?.title || chordsData.track?.title || null;
-    const songArtist = chordsData.artist || chordsObj.artist || chordsData.meta?.artist || chordsData.track?.artist || null;
+    let songTitle = chordsData.title || chordsObj.title || chordsData.meta?.title || chordsData.track?.title || null;
+    let songArtist = chordsData.artist || chordsObj.artist || chordsData.meta?.artist || chordsData.track?.artist || null;
+
+    if (!songTitle || !songArtist) {
+      try {
+        const rawTitle = await page.title();
+        const cleaned = rawTitle.replace(/\s+(?:Chords|Acordes)\s*-\s*Chordify$/i, '').trim();
+        if (cleaned.includes(' - ')) {
+          const parts = cleaned.split(' - ');
+          if (!songArtist) songArtist = parts[0].trim();
+          if (!songTitle) songTitle = parts.slice(1).join(' - ').trim();
+        } else if (!songTitle) {
+          songTitle = cleaned;
+        }
+      } catch (titleErr) {
+        console.warn('[Chordify Scraper] No se pudo inferir título desde el tag <title>:', titleErr.message);
+      }
+    }
+
     const bpm = chordsObj.chordInfo.derivedBpm || 120;
     const key = chordsObj.chordInfo.derivedKey || 'C:maj';
     const barLength = chordsObj.barLength || chordsObj.chordInfo.barLength || 4;

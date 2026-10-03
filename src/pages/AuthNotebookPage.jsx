@@ -8,6 +8,7 @@ import GuestPrompt from '../components/notebook/GuestPrompt';
 import NotebookTabs from '../components/notebook/NotebookTabs';
 import { Moon, Sun, Music } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
+import LanguageSelector from '../components/notebook/LanguageSelector';
 
 export default function AuthNotebookPage({ onAuthenticated }) {
   const { lang, setLang, t } = useLanguage();
@@ -43,27 +44,7 @@ export default function AuthNotebookPage({ onAuthenticated }) {
 
         {/* Top Controls: Language Switcher + Desk Theme */}
         <div className="flex items-center gap-3">
-          {/* Language Selector (ES / EN) */}
-          <div className="flex items-center bg-stone-900/80 backdrop-blur-md p-1 rounded-lg border border-stone-700/60 shadow-sm">
-            <button
-              onClick={() => setLang('es')}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
-                lang === 'es' ? 'bg-amber-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
-              }`}
-            >
-              <span>🇪🇸</span>
-              <span>ES</span>
-            </button>
-            <button
-              onClick={() => setLang('en')}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
-                lang === 'en' ? 'bg-amber-600 text-white shadow-sm' : 'text-stone-400 hover:text-stone-200'
-              }`}
-            >
-              <span>🇺🇸</span>
-              <span>EN</span>
-            </button>
-          </div>
+          <LanguageSelector />
 
           {/* Theme Toggle */}
           <button

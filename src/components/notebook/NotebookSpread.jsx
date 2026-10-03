@@ -7,18 +7,27 @@ import RegisterForm from './RegisterForm';
 import GuestPrompt from './GuestPrompt';
 import NotebookTabs from './NotebookTabs';
 import InstrumentBookmark from './InstrumentBookmark';
+import LanguageSelector from './LanguageSelector';
 import SetlistsPanel from './SetlistsPanel';
 import FavoritesLibraryPanel from './FavoritesLibraryPanel';
 import SongSheetView from '../song/SongSheetView';
 import SongSearchRebuild from '../search/SongSearchRebuild';
+import ScoresIndexPanel from '../scores/ScoresIndexPanel';
+import ScoreStandView from '../scores/ScoreStandView';
+import ScoreDigitizerStudio from '../scores/ScoreDigitizerStudio';
+import { scoresApi } from '../../services/scoresApi';
 import { SAMPLE_SONGS_DATA } from '../../data/sampleSongs';
 import useSetlistManager from '../../hooks/useSetlistManager';
 import {
   BookOpen,
   Crown,
   Zap,
+  ShieldCheck,
   LogOut,
-  Music2
+  Music2,
+  FileText,
+  Music,
+  Database
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth, TIERS } from '../../context/AuthContext';
@@ -28,17 +37,114 @@ import { useAuth, TIERS } from '../../context/AuthContext';
  * Master dual-page analog notebook spread controller with 3D page flip animation,
  * authentication gating, setlists and favorites panels, and song sheet view.
  */
-export default function NotebookSpread() {
+export default function NotebookSpread({ onNavigateDev }) {
   const { t } = useLanguage();
-  const { currentUser, login, logout, toggleTier, openUpgradeModal } = useAuth();
+  const { currentUser, login, logout, toggleTier, openUpgradeModal, isPro, isAdmin } = useAuth();
 
   const [activeAuthTab, setActiveAuthTab] = useState('login');
   const [selectedSong, setSelectedSong] = useState(null);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isPageFlipping, setIsPageFlipping] = useState(false);
   const [flipDirection, setFlipDirection] = useState('forward');
+  const [isDigitizerOpen, setIsDigitizerOpen] = useState(false);
+  const [digitizerTarget, setDigitizerTarget] = useState(null);
 
-  const isPro = currentUser?.tier === TIERS.PREMIUM;
+  // Sección del cuaderno: 'songs' (Cancionero) | 'scores' (Partituras & Tabs)
+  const [notebookSection, setNotebookSection] = useState('songs');
+  const [activeScoreData, setActiveScoreData] = useState(null);
+  const [savedScores, setSavedScores] = useState([]);
+  const [isLoadingScore, setIsLoadingScore] = useState(false);
+
+  // Cargar partituras guardadas
+  React.useEffect(() => {
+    if (currentUser) {
+      scoresApi.getSavedScores().then(setSavedScores).catch(() => {});
+    }
+  }, [currentUser]);
+
+  const handleSelectScore = async (scoreInfo) => {
+    setIsLoadingScore(true);
+    try {
+      if (scoreInfo.type === 'tango_archive' || scoreInfo.source === 'TodoTango') {
+        const tangoData = await scoresApi.getTangoScore(scoreInfo.tangoId || scoreInfo.id);
+        setActiveScoreData(tangoData);
+      } else if (scoreInfo.scoreBuffer || scoreInfo.musicXml) {
+        setActiveScoreData(scoreInfo);
+      } else if (scoreInfo.songsterrId) {
+        const fullScore = await scoresApi.getSongsterrScore(scoreInfo.songsterrId, scoreInfo.defaultTrack);
+        setActiveScoreData(fullScore);
+      } else {
+        setActiveScoreData(scoreInfo);
+      }
+    } catch (err) {
+      console.error('Error al cargar partitura:', err);
+      alert('No se pudo cargar la partitura seleccionada.');
+    } finally {
+      setIsLoadingScore(false);
+    }
+  };
+
+  const handleSwitchScorePart = async (partId) => {
+    if (!activeScoreData) return;
+    if (!activeScoreData.songId) {
+      setActiveScoreData(prev => ({
+        ...prev,
+        activePartId: partId,
+      }));
+      return;
+    }
+    try {
+      const updated = await scoresApi.switchPart(activeScoreData.songId, partId, {
+        revisionId: activeScoreData.revisionId,
+        image: activeScoreData.image,
+        title: activeScoreData.title,
+        artist: activeScoreData.artist
+      });
+      setActiveScoreData(prev => ({
+        ...prev,
+        activePartId: partId,
+        activePartName: updated.name,
+        activeTuning: updated.tuning,
+        capo: updated.capo,
+        measuresCount: updated.measuresCount,
+        alphaTex: updated.alphaTex,
+        partData: updated.partData
+      }));
+    } catch (err) {
+      console.error('Error al cambiar de pista en partitura:', err);
+    }
+  };
+
+  const handleSaveActiveScore = async () => {
+    if (!activeScoreData) return;
+    try {
+      await scoresApi.saveScoreToLibrary({
+        songsterrId: activeScoreData.songId,
+        title: activeScoreData.title,
+        artist: activeScoreData.artist,
+        defaultTrack: activeScoreData.activePartId,
+        tracks: activeScoreData.tracks,
+        songData: activeScoreData.partData
+      });
+      const updated = await scoresApi.getSavedScores();
+      setSavedScores(updated);
+    } catch (err) {
+      console.error('Error al guardar partitura en biblioteca:', err);
+    }
+  };
+
+  const handleDeleteSavedScore = async (id) => {
+    try {
+      await scoresApi.removeScoreFromLibrary(id);
+      const updated = await scoresApi.getSavedScores();
+      setSavedScores(updated);
+      if (activeScoreData?.id === id) {
+        setActiveScoreData(null);
+      }
+    } catch (err) {
+      console.error('Error al eliminar partitura:', err);
+    }
+  };
 
   // Setlist, Favorites & Catalog Manager Hook
   const {
@@ -57,7 +163,7 @@ export default function NotebookSpread() {
     handlePlaySongFromSetlistPanel,
     handleImportScrapedSong,
   } = useSetlistManager({
-    onSelectSong: (song) => setSelectedSong(song),
+    onSelectSong: (song) => handleOpenSongItem(song),
     onUpdateSelectedSong: (updaterFn) => setSelectedSong(updaterFn),
   });
 
@@ -84,8 +190,35 @@ export default function NotebookSpread() {
   };
 
   const handleOpenSongItem = (songItem) => {
-    const fullSongData = SAMPLE_SONGS_DATA[songItem.id] || songItem;
-    setStageModeSetlist(null);
+    // Si el ítem es una partitura / tablatura de Songsterr o TodoTango
+    const isScore = Boolean(
+      songItem?.isScore ||
+      songItem?.type === 'score' ||
+      songItem?.type === 'tango_archive' ||
+      songItem?.songsterrId ||
+      songItem?.tangoId ||
+      songItem?.content?.startsWith('[SCORE_SHEET]')
+    );
+
+    if (isScore) {
+      let scoreInfo = songItem;
+      if (songItem.content?.startsWith('[SCORE_SHEET]')) {
+        try {
+          const parsed = JSON.parse(songItem.content.replace('[SCORE_SHEET]', ''));
+          scoreInfo = { ...songItem, ...parsed };
+        } catch (e) {}
+      }
+      setSelectedSong(null);
+      handleSelectScore(scoreInfo);
+      return;
+    }
+
+    const baseSample = SAMPLE_SONGS_DATA[songItem.id] || {};
+    const fullSongData = { ...baseSample, ...songItem };
+    if (fullSongData.id) {
+      SAMPLE_SONGS_DATA[String(fullSongData.id)] = fullSongData;
+    }
+    setActiveScoreData(null);
     triggerPageFlip('forward', () => setSelectedSong(fullSongData));
   };
 
@@ -125,35 +258,60 @@ export default function NotebookSpread() {
               SongBook
             </span>
             <span className="font-mono text-[11px] text-amber-400/80 font-medium">
-              {currentUser ? `Cuaderno de ${currentUser.name}` : 'Estudio de Acordes & Canciones'}
+              {currentUser ? `${t.notebookOf || 'Cuaderno de'} ${currentUser.name}` : (t.chordStudio || 'Estudio de Acordes & Canciones')}
             </span>
           </div>
         </div>
 
-        {/* Status / Plan Toggle / Logout */}
-        <div className="flex items-center gap-3">
+        {/* Top Controls: Language Switcher (Always Visible) + Status / Plan Toggle / Logout */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Selector de idiomas universal (siempre visible en todos los estados) */}
+          <LanguageSelector />
+
           {currentUser && (
             <>
               <button
                 type="button"
                 onClick={toggleTier}
-                className={`px-3 py-1 rounded-xl text-xs font-bold font-sans transition-all flex items-center gap-1.5 cursor-pointer ${
-                  isPro ? 'bg-amber-600 text-white shadow-sm' : 'bg-stone-800 text-stone-300'
+                className={`px-2.5 sm:px-3 py-1 rounded-xl text-xs font-bold font-sans transition-all flex items-center gap-1.5 cursor-pointer ${
+                  isAdmin
+                    ? 'bg-gradient-to-r from-purple-800 to-indigo-800 text-purple-100 border border-purple-500/40 shadow-sm'
+                    : isPro
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'bg-stone-800 text-stone-300'
                 }`}
-                title="Cambiar Plan (Demo)"
+                title="Cambiar Rol (Demo): Free / Pro / Admin"
               >
-                {isPro ? <Crown className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
-                <span>{isPro ? 'PRO' : 'FREE'}</span>
+                {isAdmin ? (
+                  <ShieldCheck className="w-3.5 h-3.5 text-purple-300" />
+                ) : isPro ? (
+                  <Crown className="w-3.5 h-3.5" />
+                ) : (
+                  <Zap className="w-3.5 h-3.5" />
+                )}
+                <span>{isAdmin ? 'ADMIN' : isPro ? 'PRO' : 'FREE'}</span>
               </button>
+
+              {isAdmin && onNavigateDev && (
+                <button
+                  type="button"
+                  onClick={onNavigateDev}
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+                  title="Abrir consola de base de datos /dev"
+                >
+                  <Database className="w-3.5 h-3.5" />
+                  <span>DEV DB</span>
+                </button>
+              )}
 
               <button
                 type="button"
                 onClick={handleLogoutClick}
                 disabled={isPageFlipping}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-900/85 hover:bg-stone-800 text-stone-300 hover:text-white rounded-xl border border-stone-700 text-xs font-semibold cursor-pointer transition-colors shadow-sm"
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-stone-900/85 hover:bg-stone-800 text-stone-300 hover:text-white rounded-xl border border-stone-700 text-xs font-semibold cursor-pointer transition-colors shadow-sm"
               >
                 <LogOut className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Cerrar Cuaderno</span>
+                <span className="hidden sm:inline">{t.closeNotebook || 'Cerrar Cuaderno'}</span>
               </button>
             </>
           )}
@@ -165,12 +323,25 @@ export default function NotebookSpread() {
         <div className="absolute inset-3 bg-black/75 rounded-3xl blur-3xl -z-10 pointer-events-none" />
 
         <div
-          className="relative bg-[#271d17] p-3 sm:p-4 lg:p-5 rounded-2xl sm:rounded-3xl shadow-2xl border border-[#44332a] flex flex-col md:flex-row min-h-[620px] xl:min-h-[680px] 2xl:min-h-[730px]"
+          className={`relative bg-[#271d17] p-2 sm:p-3.5 lg:p-4 rounded-2xl sm:rounded-3xl shadow-2xl border border-[#44332a] flex flex-col ${
+            (activeScoreData || isLoadingScore)
+              ? 'w-full h-[calc(100vh-115px)] min-h-[580px] max-h-[920px] overflow-hidden'
+              : 'md:flex-row min-h-[620px] xl:min-h-[680px] 2xl:min-h-[730px]'
+          }`}
           style={{ perspective: 2800 }}
         >
-          {/* Index Tabs (only shown when not logged in) */}
-          {!currentUser && (
-            <NotebookTabs activeTab={activeAuthTab} onTabChange={setActiveAuthTab} />
+          {/* Index Tabs */}
+          {!currentUser ? (
+            <NotebookTabs activeTab={activeAuthTab} onTabChange={setActiveAuthTab} mode="auth" />
+          ) : (
+            <NotebookTabs
+              activeTab={notebookSection}
+              onTabChange={(tab) => {
+                setSelectedSong(null);
+                setNotebookSection(tab);
+              }}
+              mode="musician"
+            />
           )}
 
           {/* Instrument Bookmark Tab (hanging underneath the left page) */}
@@ -195,6 +366,22 @@ export default function NotebookSpread() {
               setlists={setlists}
               onAddSongToSetlist={handleAddSongToSetlist}
             />
+          ) : (activeScoreData || isLoadingScore) ? (
+            /* HOJA BLANCA QUE OCUPA TODO EL ANCHO DEL CUADERNO (ATRIL / IMPRESIÓN) */
+            <ScoreStandView
+              scoreData={activeScoreData}
+              isLoading={isLoadingScore}
+              onBack={() => {
+                setActiveScoreData(null);
+                setIsLoadingScore(false);
+              }}
+              onSaveToLibrary={handleSaveActiveScore}
+              isSaved={savedScores.some(s => s.songsterrId === activeScoreData?.songId || s.id === activeScoreData?.id)}
+              onSwitchPart={handleSwitchScorePart}
+              setlists={setlists}
+              onAddSongToSetlist={handleAddSongToSetlist}
+              setlistContext={setlistContext}
+            />
           ) : (
             <>
               {/* ================= LEFT STATIONARY BASE PAGE ================= */}
@@ -204,6 +391,15 @@ export default function NotebookSpread() {
                 {!currentUser ? (
                   /* Cover when logged out */
                   <NotebookCover />
+                ) : notebookSection === 'scores' ? (
+                  /* Panel de búsqueda y catálogo de partituras Songsterr */
+                  <ScoresIndexPanel
+                    onSelectScore={handleSelectScore}
+                    currentScoreId={activeScoreData?.songId}
+                    savedScores={savedScores}
+                    onRefreshSavedScores={() => scoresApi.getSavedScores().then(setSavedScores)}
+                    onDeleteSavedScore={handleDeleteSavedScore}
+                  />
                 ) : (
                   /* Interactive Setlists Panel when logged in */
                   <SetlistsPanel
@@ -256,7 +452,7 @@ export default function NotebookSpread() {
                     )}
                   </>
                 ) : (
-                  /* Favorites & Songs Library when logged in */
+                  /* Favorites, Songs & Scores Library when logged in */
                   <FavoritesLibraryPanel
                     userSongs={userSongs}
                     onOpenSong={handleOpenSongItem}
@@ -265,6 +461,8 @@ export default function NotebookSpread() {
                     onAddSongToSetlist={handleAddSongToSetlist}
                     onOpenSearchModal={() => setIsSearchModalOpen(true)}
                     isPro={isPro}
+                    onSelectScore={handleSelectScore}
+                    savedScores={savedScores}
                   />
                 )}
               </div>
@@ -338,7 +536,36 @@ export default function NotebookSpread() {
         isOpen={isSearchModalOpen}
         onClose={() => setIsSearchModalOpen(false)}
         onSongSelect={onImportScrapedSong}
+        onScoreSelect={(score) => {
+          setIsSearchModalOpen(false);
+          handleSelectScore(score);
+        }}
+        databaseSongs={userSongs}
+        onDirectPlaySong={handleOpenSongItem}
       />
+
+      {/* Estudio de Digitalización OMR Split-View Global (Oculto temporalmente) */}
+      {/* isDigitizerOpen && (
+        <ScoreDigitizerStudio
+          initialImage={digitizerTarget?.pageUrl || digitizerTarget?.pages?.[0] || null}
+          initialScore={digitizerTarget || null}
+          onClose={() => {
+            setIsDigitizerOpen(false);
+            setDigitizerTarget(null);
+          }}
+          onSaveToLibrary={async (scorePayload) => {
+            const saved = await scoresApi.saveScoreToLibrary(scorePayload);
+            const updated = await scoresApi.getSavedScores();
+            setSavedScores(updated);
+            return saved;
+          }}
+          onLoadIntoStand={(digitizedScore) => {
+            handleSelectScore(digitizedScore);
+            setIsDigitizerOpen(false);
+            setDigitizerTarget(null);
+          }}
+        />
+      ) */}
 
       {/* Footer */}
       <footer className="w-full max-w-[1560px] flex items-center justify-between text-stone-400 text-xs font-sans pt-2 z-10">

@@ -7,6 +7,9 @@ import { fileURLToPath } from 'url';
 import songRoutes from './routes/songs.js';
 import persistenceRoutes from './routes/persistence.js';
 import audioRoutes from './routes/audio.js';
+import scoresRoutes from './routes/scores.js';
+import devRoutes from './routes/dev.js';
+import artworkRoutes from './routes/artwork.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,7 +24,8 @@ console.log(`[Server] Resolviendo distPath en: ${distPath}`);
 
 // Middlewares
 app.use(cors()); // Habilita CORS para todas las rutas
-app.use(express.json()); // Permite al servidor entender JSON
+app.use(express.json({ limit: '50mb' })); // Permite al servidor entender JSON de imágenes escaneadas
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Servir archivos estáticos con una configuración más explícita
 app.use(express.static(distPath, {
@@ -33,6 +37,9 @@ app.use(express.static(distPath, {
 app.use('/api/songs', songRoutes);
 app.use('/api/persistence', persistenceRoutes);
 app.use('/api/audio', audioRoutes);
+app.use('/api/scores', scoresRoutes);
+app.use('/api/dev', devRoutes);
+app.use('/api/artwork', artworkRoutes);
 
 // Catch-all mejorado
 app.use((req, res) => {

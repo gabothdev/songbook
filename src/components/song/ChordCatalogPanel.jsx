@@ -52,6 +52,7 @@ export default function ChordCatalogPanel({
   currentTime = null,
   onSetTimestamp = null,
   onAddMeasure = null,
+  onUpdateChord = null,
   className = '',
 }) {
   return (
@@ -153,6 +154,7 @@ export default function ChordCatalogPanel({
               currentTime={currentTime}
               onSetTimestamp={onSetTimestamp}
               onAddMeasure={onAddMeasure}
+              onUpdateChord={onUpdateChord}
             />
 
             {/* Active Chord Card in real-time below the Ribbon */}

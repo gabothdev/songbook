@@ -69,6 +69,13 @@ export const translations = {
     language: 'Idioma',
     langEs: 'Español',
     langEn: 'English',
+
+    // Musician tabs & header
+    tabSongbook: 'Cancionero',
+    tabScores: 'Partituras & Tabs',
+    notebookOf: 'Cuaderno de',
+    chordStudio: 'Estudio de Acordes & Canciones',
+    closeNotebook: 'Cerrar Cuaderno',
   },
   en: {
     badge: 'Musician Edition • v2.0',
@@ -140,6 +147,13 @@ export const translations = {
     language: 'Language',
     langEs: 'Español',
     langEn: 'English',
+
+    // Musician tabs & header
+    tabSongbook: 'Songbook',
+    tabScores: 'Scores & Tabs',
+    notebookOf: 'Notebook of',
+    chordStudio: 'Chord & Song Studio',
+    closeNotebook: 'Close Notebook',
   },
 };
 

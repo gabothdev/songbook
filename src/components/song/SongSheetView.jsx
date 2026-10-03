@@ -20,14 +20,15 @@ import { useAuth } from '../../context/AuthContext';
 import usePitchShiftAudio from '../../hooks/usePitchShiftAudio';
 import useSongPreferences from '../../hooks/useSongPreferences';
 import useYouTubeSync from '../../hooks/useYouTubeSync';
-import { CHORD_DATABASE } from '../../data/sampleSongs';
+import { CHORD_DATABASE, SAMPLE_SONGS_DATA } from '../../data/sampleSongs';
 import { transposeChord, normalizeChordName } from '../../utils/music';
 import { playStrummedChord, getNotesFromFrets } from '../../utils/audioPlayer';
-import { parseSongTextToGrid } from '../../utils/gridParser';
-import { lookupChord, saveCustomSongVersion, restoreOriginalSong, saveSong } from '../../services/persistenceApi';
+import { parseSongTextToGrid, alignCompasesWithSongSections, formatCompasesToText } from '../../utils/gridParser';
+import { lookupChord, saveCustomSongVersion, restoreOriginalSong, saveSong, updateSongPreferences } from '../../services/persistenceApi';
 import SongLyricsEditor from './SongLyricsEditor';
 import SongLyricsVisualEditor from './SongLyricsVisualEditor';
 import YouTubeVideoPickerModal from './YouTubeVideoPickerModal';
+import SongMemorabiliaDesk from './SongMemorabiliaDesk';
 
 /**
  * SongSheetView Component
@@ -60,6 +61,7 @@ export default function SongSheetView({
     song,
     isPremium,
     openUpgradeModal,
+    currentUser,
   });
 
   // Song Content & Custom Arrangement State
@@ -130,6 +132,53 @@ export default function SongSheetView({
     });
   }, [handleTranspose]);
 
+  // Handle updating and persisting artist image and album cover
+  const handleUpdateSongImages = useCallback(
+    async ({ artistImage, albumCover, album, releaseYear, versionType, versionDetails }) => {
+      if (!song) return;
+      if (artistImage !== undefined) song.artistImage = artistImage;
+      if (albumCover !== undefined) song.albumCover = albumCover;
+      if (album !== undefined) song.album = album;
+      if (releaseYear !== undefined) song.releaseYear = releaseYear;
+      if (versionType !== undefined) song.versionType = versionType;
+      if (versionDetails !== undefined) song.versionDetails = versionDetails;
+
+      try {
+        const saved = await updateSongPreferences({
+          id: song.id,
+          title: song.title,
+          artist: song.artist,
+          content: song.content,
+          youtubeId: song.youtubeId,
+          syncData: song.syncData,
+          transpose: song.transpose,
+          chordVariants: song.chordVariants,
+          artistImage,
+          albumCover,
+          album,
+          releaseYear,
+          versionType,
+          versionDetails,
+          user: currentUser?.email || currentUser?.id,
+          isCustom: song.isCustom,
+        });
+
+        if (saved?.id) {
+          song.id = String(saved.id);
+        }
+        if (SAMPLE_SONGS_DATA && song.id) {
+          SAMPLE_SONGS_DATA[String(song.id)] = {
+            ...(SAMPLE_SONGS_DATA[String(song.id)] || {}),
+            ...song,
+          };
+        }
+      } catch (err) {
+        console.warn('Error saving song images and metadata:', err);
+      }
+    },
+    [song]
+  );
+
   // Pre-computed rhythmic measures (BeatGrid) from Chordify or database syncData
   const initialCompases = useMemo(() => {
     if (song.compases && Array.isArray(song.compases) && song.compases.length > 0) {
@@ -155,18 +204,18 @@ export default function SongSheetView({
 
   // Parse or retrieve pre-computed rhythmic measures (BeatGrid)
   const parsedCompases = useMemo(() => {
-    // 1. If the song already has synchronized compases (Chordify / syncData), PRESERVE THEM!
+    const rawLyrics = isEditMode
+      ? draftContent
+      : isCustom && currentContent
+      ? currentContent
+      : currentContent || song.content || '';
+
+    // 1. If the song already has synchronized compases (Chordify / syncData), PRESERVE THEM and align sections!
     if (activeCompases && activeCompases.length > 0) {
-      return activeCompases;
+      return alignCompasesWithSongSections(activeCompases, rawLyrics);
     }
     // 2. Otherwise parse from draft text or current content
-    if (isEditMode) {
-      return parseSongTextToGrid(draftContent || '', 4);
-    }
-    if (isCustom && currentContent) {
-      return parseSongTextToGrid(currentContent, 4);
-    }
-    return parseSongTextToGrid(currentContent || song.content || '', 4);
+    return parseSongTextToGrid(rawLyrics || '', 4);
   }, [activeCompases, isEditMode, draftContent, isCustom, currentContent, song.content]);
 
   // Transpose chords in compases dynamically
@@ -180,7 +229,19 @@ export default function SongSheetView({
     }));
   }, [parsedCompases, transpose]);
 
-  const totalBeats = transposedCompases.length * 4;
+  // Cumulative beat offset for each measure to support measures with variable beat counts (e.g. 2T pickups)
+  const measureBeatOffsets = useMemo(() => {
+    let count = 0;
+    return transposedCompases.map((m) => {
+      const start = count;
+      count += m.acordes?.length || 4;
+      return start;
+    });
+  }, [transposedCompases]);
+
+  const totalBeats = useMemo(() => {
+    return transposedCompases.reduce((acc, m) => acc + (m.acordes?.length || 4), 0);
+  }, [transposedCompases]);
 
   // Flattened beats list for real-time tracking
   const flatBeats = useMemo(() => {
@@ -352,6 +413,51 @@ export default function SongSheetView({
     setTimeout(() => setFeedbackToast(null), 1800);
   };
 
+  const handleUpdateBeatGridChord = (cellGlobalIndex, newChord) => {
+    if (!newChord) return;
+    const clean = normalizeChordName(newChord);
+
+    setActiveCompases((prev) => {
+      const currentGrid = prev || parsedCompases;
+      if (!currentGrid || currentGrid.length === 0) return prev;
+
+      const measureIdx = Math.floor(cellGlobalIndex / 4);
+      const beatIdx = cellGlobalIndex % 4;
+
+      if (measureIdx < 0 || measureIdx >= currentGrid.length) return prev;
+
+      const updated = currentGrid.map((m, idx) => {
+        if (idx === measureIdx) {
+          const newAcordes = [...m.acordes];
+          newAcordes[beatIdx] = clean;
+          return { ...m, acordes: newAcordes };
+        }
+        return m;
+      });
+
+      // Si el contenido actual no tiene letra (es instrumental o puro BeatGrid), sincronizar el texto para el visualizador
+      const textWithoutTags = (currentContent || '').replace(/\[[^\]]+\]/g, '').replace(/[\s\d:.\-_/|]+/g, '');
+      const hasLyrics = textWithoutTags.length > 20;
+      if (!hasLyrics) {
+        const bpmMatch = (currentContent || '').match(/\[BPM\s*[@:]?\s*\d+\]/i);
+        const beatsMatch = (currentContent || '').match(/\[Beats\s*[@:]?\s*\d+\]/i);
+        let header = '';
+        if (bpmMatch) header += `${bpmMatch[0]}\n`;
+        if (beatsMatch) header += `${beatsMatch[0]}\n`;
+        if (header) header += '\n';
+
+        const updatedText = header + formatCompasesToText(updated);
+        setCurrentContent(updatedText);
+        setDraftContent(updatedText);
+      }
+
+      return updated;
+    });
+
+    setFeedbackToast(`Acorde [${clean}] actualizado en compás ${Math.floor(cellGlobalIndex / 4) + 1}, pulso ${(cellGlobalIndex % 4) + 1}`);
+    setTimeout(() => setFeedbackToast(null), 1500);
+  };
+
   const handleSaveCustomVersion = async () => {
     setIsSaving(true);
     try {
@@ -497,17 +603,27 @@ export default function SongSheetView({
       }
 
       let targetGlobalCompasIdx = -1;
-      if (sIdx !== undefined && sIdx >= 0 && sIdx < sectionCompasBlocks.length) {
-        targetGlobalCompasIdx = sectionCompasBlocks[sIdx].startIdx;
-      } else if (sec.name) {
+      // Match by exact section name first to be completely resilient to section order variations
+      if (sec.name) {
         const found = sectionCompasBlocks.find(
           (b) => b.name.toLowerCase() === sec.name.toLowerCase()
         );
         if (found) targetGlobalCompasIdx = found.startIdx;
       }
+      if (targetGlobalCompasIdx === -1 && sIdx !== undefined && sIdx >= 0 && sIdx < sectionCompasBlocks.length) {
+        targetGlobalCompasIdx = sectionCompasBlocks[sIdx].startIdx;
+      }
 
       if (targetGlobalCompasIdx !== -1) {
-        const beatIdx = targetGlobalCompasIdx * 4;
+        // Use cumulative beat offset instead of multiplying by 4 (supports 2T/3T measures)
+        const beatIdx = measureBeatOffsets[targetGlobalCompasIdx] ?? (targetGlobalCompasIdx * 4);
+
+        const compas = transposedCompases[targetGlobalCompasIdx];
+        const firstChord = compas?.acordes?.[0];
+        if (firstChord && firstChord !== '𝄾' && firstChord !== '𝄽') {
+          handlePlayChord(firstChord);
+        }
+
         const jumpedTime = jumpToBeat(beatIdx);
         if (targetTime === null) {
           targetTime = jumpedTime;
@@ -524,7 +640,7 @@ export default function SongSheetView({
         setExternalTime(targetTime);
       }
     },
-    [sectionCompasBlocks, jumpToBeat, playerInstance, syncSeekTime]
+    [sectionCompasBlocks, measureBeatOffsets, transposedCompases, handlePlayChord, jumpToBeat, playerInstance, syncSeekTime]
   );
 
   // Synchronize BeatGrid and Video to the exact timestamp and line occurrence of the clicked chord
@@ -534,6 +650,25 @@ export default function SongSheetView({
 
       handlePlayChord(chordName);
 
+      // 1. Direct Beat Mapping: if chordContext has exact beatIdx from lineTimingsMap
+      if (chordContext?.beatIdx !== undefined && chordContext?.beatIdx !== null && chordContext.beatIdx >= 0) {
+        const jumpedTime = jumpToBeat(chordContext.beatIdx);
+        const targetTime = chordContext.targetTime !== undefined && chordContext.targetTime !== null
+          ? chordContext.targetTime
+          : jumpedTime;
+
+        if (targetTime !== null && !isNaN(targetTime)) {
+          if (playerInstance?.seekTo) {
+            try {
+              playerInstance.seekTo(targetTime, true);
+            } catch (e) {}
+          }
+          syncSeekTime(targetTime);
+          setExternalTime(targetTime);
+        }
+        return;
+      }
+
       const sec = chordContext?.sec || chordContext;
       const sIdx = chordContext?.sIdx ?? -1;
       const chordRatio = chordContext?.chordRatio ?? 0;
@@ -542,7 +677,7 @@ export default function SongSheetView({
 
       let targetTime = null;
 
-      // 1. High precision timestamp calculation from section timestamps
+      // 2. High precision timestamp calculation from section timestamps (fallback)
       if (startTime !== null && startTime !== undefined) {
         if (nextTime !== null && nextTime !== undefined && nextTime > startTime) {
           targetTime = startTime + chordRatio * (nextTime - startTime);
@@ -619,7 +754,7 @@ export default function SongSheetView({
       }
 
       if (targetGlobalCompasIdx !== -1) {
-        const beatIdx = targetGlobalCompasIdx * 4;
+        const beatIdx = measureBeatOffsets[targetGlobalCompasIdx] ?? (targetGlobalCompasIdx * 4);
         const jumpedTime = jumpToBeat(beatIdx);
         if (targetTime === null) {
           targetTime = jumpedTime;
@@ -636,7 +771,7 @@ export default function SongSheetView({
         setExternalTime(targetTime);
       }
     },
-    [handlePlayChord, transposedCompases, sectionCompasBlocks, jumpToBeat, playerInstance, syncSeekTime]
+    [handlePlayChord, transposedCompases, measureBeatOffsets, sectionCompasBlocks, jumpToBeat, playerInstance, syncSeekTime]
   );
 
   return (
@@ -853,6 +988,18 @@ export default function SongSheetView({
 
         {/* ================= MAIN DUAL PAGE SPREAD ================= */}
         <div className="w-full flex-1 min-w-0 flex flex-col md:flex-row min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] relative z-10">
+          {/* ================= ANALOG DESK MEMORABILIA (POLAROID & CD) ================= */}
+          <SongMemorabiliaDesk
+            song={{
+              ...song,
+              content: currentContent,
+              isCustom,
+              originalContent,
+              youtubeId: currentYouTubeId,
+            }}
+            onUpdateSongImages={handleUpdateSongImages}
+          />
+
           {/* ================= LEFT PAGE (Lyrics & Controls / Editor) ================= */}
           {isEditMode ? (
             <SongLyricsVisualEditor
@@ -867,6 +1014,14 @@ export default function SongSheetView({
               isSaving={isSaving}
               isSyncMode={isSyncMode}
               onToggleSyncMode={() => setIsSyncMode(!isSyncMode)}
+              currentPlaybackTime={currentTime}
+              activeSectionName={
+                currentBeatIndex >= 0 && transposedCompases[Math.floor(currentBeatIndex / 4)]
+                  ? transposedCompases[Math.floor(currentBeatIndex / 4)].seccion
+                  : null
+              }
+              onSelectSection={handleSelectSection}
+              onSelectChord={handlePlayChord}
             />
           ) : (
             <div className={`${mobilePage === 'lyrics' ? 'flex' : 'hidden'} md:flex flex-col justify-between flex-1 min-w-0 bg-[#fcf9f2] rounded-2xl md:rounded-r-none md:rounded-l-2xl shadow-[inset_-10px_0_15px_rgba(0,0,0,0.06)] border border-stone-300 md:border-r-0 overflow-hidden paper-texture p-7 lg:p-9 min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] relative z-10`}>
@@ -902,6 +1057,7 @@ export default function SongSheetView({
                 {/* Lyrics & Chords Renderer */}
                 <SongLyricsRenderer
                   song={{ ...song, content: currentContent, isCustom, originalContent }}
+                  compases={transposedCompases}
                   transpose={transpose}
                   onPlayChord={handlePlayChord}
                   onSelectSection={handleSelectSection}
@@ -936,7 +1092,10 @@ export default function SongSheetView({
             isPlaybackActive={isPlaybackActive}
             transposedCompases={transposedCompases}
             currentBeatIndex={currentBeatIndex}
-            onBeatClick={(chord, idx) => {
+            onBeatClick={(chord, idx, measure) => {
+              if (chord && chord !== '𝄾' && chord !== '𝄽') {
+                handlePlayChord(chord);
+              }
               const targetTime = jumpToBeat(idx);
               if (targetTime !== undefined && targetTime !== null) {
                 setExternalTime(targetTime);
@@ -959,6 +1118,7 @@ export default function SongSheetView({
             currentTime={currentTime}
             onSetTimestamp={handleSetMeasureTimestamp}
             onAddMeasure={handleAddMeasureToSection}
+            onUpdateChord={handleUpdateBeatGridChord}
           />
         </div>
       </div>

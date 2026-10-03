@@ -103,3 +103,67 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #b8ac97;
 }
+
+/* ================= ALPHATAB SONGSTERR-STYLE CURSORS & LYRICS ================= */
+.at-cursors {
+  pointer-events: none !important;
+}
+
+/* Indicador de pulso activo estilo Songsterr (cápsula verde vertical redondeada) */
+.songsterr-playback-pill {
+  position: absolute;
+  box-sizing: border-box !important;
+  border: 2.5px solid #22c55e !important;
+  border-radius: 9999px !important;
+  background-color: rgba(34, 197, 94, 0.16) !important;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.5), inset 0 0 4px rgba(34, 197, 94, 0.25) !important;
+  pointer-events: none !important;
+  z-index: 1000 !important;
+  will-change: left, top;
+}
+
+/* Ocultar el cursor estándar de AlphaTab para dar paso a la cápsula Songsterr */
+.at-cursor-beat {
+  display: none !important;
+}
+
+/* Sombreado sutil del compás activo */
+.at-cursor-bar {
+  background: rgba(34, 197, 94, 0.05) !important;
+  border-radius: 6px !important;
+  pointer-events: none !important;
+}
+
+/* Tipografía de letra sincronizada bajo los compases */
+.alphaTab text {
+  font-family: inherit;
+}
+
+/* Acordes destacados con elegancia editorial (SongBook Warm Ink) */
+.alphaTab text.at-chord,
+.alphaTab g.at-chord text {
+  font-family: 'Crimson Pro', 'Georgia', serif !important;
+  font-weight: 700 !important;
+  fill: #1c1917 !important;
+  font-size: 13px !important;
+}
+
+/* Letra debajo de la tablatura: nítida, cálida y legible */
+.alphaTab text.at-lyrics,
+.alphaTab g.at-lyrics text {
+  font-family: 'Inter', -apple-system, sans-serif !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  fill: #44403c !important;
+  letter-spacing: 0.01em !important;
+}
+
+/* Utilidad para cinta de secciones sin barra de scroll visible */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+

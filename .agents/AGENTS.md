@@ -1,237 +1,49 @@
-# Guía de Desarrollo y Onboarding para Agentes de IA: SongBook
+# Guía de Arquitectura e Índice de Desarrollo: SongBook v2
 
-Esta guía contiene la información técnica, arquitectónica y de diseño de datos sobre **SongBook** para que cualquier nuevo agente de IA pueda entender el proyecto, interactuar con su base de datos y continuar con su desarrollo.
-
----
-
-## 1. Visión General del Proyecto
-
-**SongBook** es un cancionero digital interactivo (*"The Musician's Notebook"*) diseñado para músicos, compositores y bandas. Su interfaz recrea la experiencia analógica y táctil de un **cuaderno encuadernado en espiral metálico**, hojas de papel texturadas y recortes rasgados flotantes, combinándolo con la potencia de:
-- Visualización de acordes interactivos con sonido real (**Tone.js**).
-- Sincronización con videos de YouTube en notas rasgadas arrastrables (**Floating Paper Scrap**).
-- Gestión avanzada de repertorios (**Setlists**) y canciones favoritas (**⭐ Favoritas**).
-- Modelo de monetización **Freemium** (Planes *Free* y *Pro/Premium* con límites y anuncios).
-- Soporte multilingüe (**i18n** Español/Inglés).
+SongBook (*"The Musician's Notebook"*) es un cancionero y atril digital interactivo diseñado para músicos, compositores y bandas. Recrea la experiencia táctil de un cuaderno encuadernado en espiral con hojas de papel texturadas, sincronización rítmica con videos de YouTube, partituras interactivas y gestión de repertorios.
 
 ---
 
-## 2. Arquitectura de Archivos y Componentes Clave
+## 1. Arquitectura del Proyecto
 
-### Frontend (`src/`)
-
-```
-src/
-├── App.jsx                        # Entrada principal con LanguageProvider y AuthProvider
-├── main.jsx                       # Montaje de React 18 en el DOM
-├── index.css                      # Estilos globales, texturas de papel (.paper-texture, .desk-surface)
-├── config.js                      # Configuración de URLs de API
-├── context/
-│   ├── AuthContext.jsx            # Autenticación, roles (FREE/PREMIUM), límites y modal de upgrade
-│   └── LanguageContext.jsx        # Contexto i18n con detección de idioma del navegador
-├── i18n/
-│   └── translations.js            # Diccionario de traducciones (Español / Inglés)
-├── data/
-│   └── sampleSongs.js             # Canciones de muestra precargadas y acordes estándar
-├── services/
-│   └── scraperApi.js              # Cliente para scraping (Ultimate Guitar y Cifra Club)
-├── utils/
-│   ├── audioPlayer.js             # Motor de síntesis y rasgueo de acordes con Tone.js
-│   ├── cache.js                   # Caché en memoria para peticiones
-│   └── music.js                   # Transposición de notas, acordes y parsing de texto
-└── components/
-    ├── notebook/
-    │   ├── NotebookSpread.jsx     # CONTROLLER PRINCIPAL: Doble página con animación 3D (page-flip)
-    │   ├── SetlistsPanel.jsx      # PÁGINA IZQUIERDA: Listado y contenido detallado de Setlists
-    │   ├── FavoritesLibraryPanel.jsx # PÁGINA DERECHA: Canciones favoritas, catálogo y buscador
-    │   ├── NotebookCover.jsx      # Tapa de cuero y bocetos cuando no hay sesión iniciada
-    │   ├── NotebookTabs.jsx       # Pestañas laterales de índice
-    │   ├── SpiralRings.jsx        # Anillas metálicas de espiral central
-    │   ├── LoginForm.jsx          # Formulario de inicio de sesión
-    │   ├── RegisterForm.jsx       # Formulario de registro de músico
-    │   └── GuestPrompt.jsx        # Acceso directo en Modo Libre
-    ├── song/
-    │   ├── SongSheetView.jsx      # Vista de atril: 2 páginas con acordes, transposición y autoscroll
-    │   └── FloatingVideoPaper.jsx # Reproductor YouTube sobre papel rasgado arrastrable
-    ├── guitar/
-    │   └── GuitarChordDiagram.jsx # Diagrama SVG interactivo de acordes para guitarra
-    ├── monetization/
-    │   ├── UpgradeModal.jsx       # Modal de ventas y suscripción a SongBook Pro
-    │   └── AdBanner.jsx           # Banner publicitario para usuarios del plan Free
-    └── search/
-        ├── SongSearchRebuild.jsx  # Modal de búsqueda y agregación de canciones online
-        └── SongScraperModal.jsx   # Importador de acordes desde URLs
+```text
+songbook/
+├── src/
+│   ├── components/
+│   │   ├── notebook/         # Cuaderno analógico doble página, espiral, setlists, tapas
+│   │   ├── song/             # Cancionero (SongSheetView, BeatGrid, Memorabilia, video flotante)
+│   │   ├── scores/           # Atril de partituras interactivas AlphaTab, Songsterr, TodoTango
+│   │   ├── search/           # Buscador inteligente por opciones y biblioteca interna
+│   │   ├── guitar/           # Diagramas vectoriales SVG de acordes
+│   │   └── monetization/     # Modal de upgrade a SongBook Pro y control de cuotas
+│   ├── services/             # Clientes API: persistenceApi, scoresApi, scraperApi
+│   ├── hooks/                # useYouTubeSync, useSongPreferences, useSetlistManager, usePitchShiftAudio
+│   └── utils/                # audioPlayer (Tone.js), alphaTexSanitizer, music, gridParser
+└── server/
+    ├── routes/               # persistence.js, audio.js, songs.js, scores.js
+    ├── services/             # songsterr.js, todotango.js, scraper.js, omr.js
+    ├── config/               # puppeteer.js (Stealth / Chrome nativo)
+    └── prisma/               # schema.prisma, dev.db (SQLite)
 ```
 
 ---
 
-## 3. Estructura y Esquema de la Base de Datos (Prisma + SQLite)
+## 2. Reglas Específicas por Dominio
 
-La base de datos relacional se encuentra en `server/prisma/dev.db` y es gestionada con **Prisma ORM**.
+Para optimizar el uso de contexto en las conversaciones con IA, cada módulo técnico cuenta con sus directrices específicas:
 
-### Diagrama Entidad-Relación
-
-```mermaid
-erDiagram
-    Song ||--o{ Favorite : "marcada como"
-    Song ||--o{ SetlistSong : "incluida en"
-    Setlist ||--o{ SetlistSong : "contiene"
-    
-    Song {
-        string id PK "cuid"
-        string title "Título de la canción"
-        string artist "Artista o Banda"
-        string content "Letra con etiquetas [Chord]"
-        string youtubeId "ID de YouTube (opcional)"
-        string syncData "JSON de timestamps rítmicos"
-        int transpose "Tono de transposición semitonal guardado"
-        string chordVariants "JSON con variaciones de acordes seleccionadas"
-        datetime createdAt
-        datetime updatedAt
-    }
-
-    Favorite {
-        string id PK "fav_{songId}"
-        string songId FK
-        datetime createdAt
-    }
-
-    Setlist {
-        string id PK "cuid"
-        string name "Nombre del repertorio"
-        datetime createdAt
-    }
-
-    SetlistSong {
-        string id PK "cuid"
-        string setlistId FK
-        string songId FK
-        int order "Posición de ejecución (1, 2, 3...)"
-    }
-
-    CustomChord {
-        string id PK "cuid"
-        string instrument "guitar, bandoneon, etc."
-        string chordName "Nombre personalizado"
-        string data "JSON string con posiciones"
-        datetime createdAt
-    }
-
-    ChordDefinition {
-        string id PK "cuid"
-        string instrument "guitar, bandoneon, etc."
-        string key "Tonalidad (C, D, F#, etc.)"
-        string suffix "Sufijo (major, minor, 7, m7, etc.)"
-        string chordName "Nombre canónico (C, Cm, C7, etc.)"
-        string positions "JSON string con variantes"
-        datetime createdAt
-    }
-```
+- **Partituras, AlphaTab & Songsterr**: Ver [src/components/scores/AGENTS.md](file:///e:/Proyectos/songbook/src/components/scores/AGENTS.md).
+- **Base de Datos, Prisma & Usuarios**: Ver [server/prisma/AGENTS.md](file:///e:/Proyectos/songbook/server/prisma/AGENTS.md).
+- **Cancionero, BeatGrid & Memorabilia**: Ver [src/components/song/AGENTS.md](file:///e:/Proyectos/songbook/src/components/song/AGENTS.md).
+- **Cuaderno Analógico & Setlists**: Ver [src/components/notebook/AGENTS.md](file:///e:/Proyectos/songbook/src/components/notebook/AGENTS.md).
 
 ---
 
-## 4. Endpoints de la API Backend
+## 3. Invariantes del Sistema
 
-### Persistencia (`/api/persistence/`)
-
-| Método | Endpoint | Descripción |
-| :--- | :--- | :--- |
-| `GET` | `/api/persistence/songs` | Obtiene todas las canciones guardadas con su tono y variaciones. |
-| `POST` | `/api/persistence/songs` | Guarda o actualiza una canción (`upsert`), incluyendo `transpose` y `chordVariants`. |
-| `PATCH`| `/api/persistence/songs/preferences` | Actualiza la transposición y variaciones de acordes de una canción. |
-| `GET` | `/api/persistence/favorites` | Obtiene la lista de canciones marcadas como favoritas. |
-| `POST` | `/api/persistence/favorites` | Marca una canción como favorita guardando sus preferencias. |
-| `DELETE`| `/api/persistence/favorites/:songId` | Desmarca una canción de favoritas. |
-| `GET` | `/api/persistence/setlists` | Obtiene todos los setlists con sus canciones ordenadas por `order`. |
-| `POST` | `/api/persistence/setlists` | Crea un nuevo setlist por nombre. |
-| `POST` | `/api/persistence/setlists/songs` | Agrega una canción a un setlist preservando tono y digitaciones. |
-| `DELETE`| `/api/persistence/setlists/:name/songs/:songId` | Quita una canción específica de un setlist. |
-| `DELETE`| `/api/persistence/setlists/:name` | Elimina un setlist completo y sus relaciones. |
-| `GET` | `/api/persistence/chords/lookup?name=...` | Busca la definición de un acorde (trastes, cejillas, dedos) en SQLite. |
-| `POST` | `/api/persistence/chords` | Guarda una variante personalizada de acorde para un usuario. |
-
-### Streaming de Audio & Transcripción (`/api/audio/` y `/api/songs/`)
-
-| Método | Endpoint | Descripción |
-| :--- | :--- | :--- |
-| `GET` | `/api/audio/stream?youtubeId=...` | Streaming de audio en alta calidad con soporte `206 Partial Content` y caché en disco (`.webm`) para pitch shifting. |
-| `POST` | `/api/songs/transcribe/youtube` | Transcripción de acordes y BeatGrid usando Chordify o IA local. |
-| `GET` | `/api/songs/content?url=...&source=...` | Scraping de canciones desde Ultimate Guitar y Cifra Club. |
-
----
-
-## 5. Ingesta Masiva del Diccionario de Acordes
-
-El proyecto cuenta con un script de ingesta en `server/prisma/seed-chords.js`:
-- Lee recursivamente el catálogo JSON de acordes desde `public/chords-db/` (o desde `chordbook`).
-- Normaliza nombres de acordes a su nomenclatura musical estándar (`key + suffix`).
-- Ejecuta `createMany` en lotes de 250 registros con `skipDuplicates: true` para popular la tabla `ChordDefinition`.
-
-Para ejecutar la migración y carga de acordes:
-```bash
-cd server
-npx prisma db push
-node prisma/seed-chords.js
-```
-
----
-
-## 6. Mecanismos y Lógicas Clave
-
-### A. Pitch Shifting y Streaming de Audio (Tone.js + Pro Tier)
-- Los usuarios **Pro/Premium** pueden transponer cualquier canción con video de YouTube y escuchar el audio en el tono relativo exacto (`usePitchShiftAudio.js` con `Tone.PitchShift`).
-- El backend (`server/routes/audio.js`) utiliza `youtube-dl-exec` para descargar y transmitir el audio optimizado en streaming HTTP continuo con cabeceras `Range`.
-- El reproductor original de YouTube se silencia automáticamente (`isMuted={isPitchShiftActive}`) mientras el audio transpuesto suena en perfecta sincronía.
-- Sincronización continua de estado (heartbeat cada 120ms) que detiene y reanuda el audio inmediatamente cuando el usuario pausa el video.
-
-### B. Persistencia Dinámica de Tono y Variaciones de Acordes
-- Cada canción almacena su último valor de transposición (`transpose`) y un mapa JSON de variaciones elegidas (`chordVariants`, ej: `{"C": 1, "G": 0}`).
-- Estos datos se sincronizan bidireccionalmente entre `localStorage` y la base de datos SQLite (`/api/persistence/songs/preferences`).
-- Al abrir una canción desde la biblioteca, repertorios (Setlists) o Stage Mode, se carga automáticamente en la tonalidad y con las digitaciones guardadas por el músico.
-
-### C. Panel Visual de Progreso por Etapas en el Buscador
-- `SongSearchRebuild.jsx` cuenta con un modal de progreso animado con Framer Motion que muestra el estado de la importación paso a paso:
-  1. Conexión con la fuente / YouTube.
-  2. Descarga de acordes y cuadrícula rítmica (BeatGrid).
-### D. Scraping de Chordify & Evasión de Cloudflare (Puppeteer Stealth)
-- **Detección de Chrome Nativo**: `server/config/puppeteer.js` detecta automáticamente la instalación nativa de Google Chrome (`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe` o `C:\Program Files\Google\Chrome\Application\chrome.exe`).
-- **Flags Antidetección**: Se eliminaron flags que delatan entornos headless (`--disable-gpu`, `--no-zygote`) y se utiliza `puppeteer-extra-plugin-stealth` con `--disable-blink-features=AutomationControlled` y `--window-size=1280,800`.
-- **Extracción Inmediata**: La llamada `/api/songs/transcribe/youtube` extrae BPM, tonalidad y cuadrícula de compases rítmicos en <10s sin descargar audio ni bloquear peticiones.
-
-### E. Silencios Musicales en Intro y Estructura Rítmica
-- Los compases vacíos iniciales se interpretan como compases de silencio (`𝄾 2T` / `𝄾 4T`) y se asignan a la sección `Intro`.
-- El primer acorde con letra activa la `Estrofa 1`.
-- Los caracteres espurios (`[']`, `['´]`, `’`) son filtrados en `SongLyricsRenderer.jsx` mediante `IGNORED_CHORD_REGEX` para preservar únicamente acordes reales y símbolos de silencios (`𝄾`, `𝄽`).
-
-### F. Editor Visual de Canciones Pro & Drag-and-Drop
-- **Interacción sin Textarea**: En lugar de requerir que el usuario edite texto plano con corchetes (`[C]`), `SongLyricsVisualEditor.jsx` desglosa la letra en palabras interactivas con ranuras magnéticas superiores (`ChordDropSlot`).
-- **Arrastre desde el BeatGrid**:
-  - `BeatGrid.jsx` convierte las celdas de acordes en elementos arrastrables con payload JSON `{ chord, beatIndex, secTime, seccion }`.
-  - Al soltarlas sobre cualquier palabra de la letra, el acorde se asocia visualmente y hereda el timestamp rítmico si está en modo sincronizado.
-- **Detección Instrumental & Alta de Letra**:
-  - Si una canción no posee versos (es solo acordes o instrumental), el editor muestra un banner destacado con el botón `➕ Añadir Letra` para transcribir los versos y habilitar las ranuras de acordes.
-- **Selector de Videos en Papel Rasgado**:
-  - Si la canción no tiene video enlazado, `FloatingVideoPaper.jsx` muestra el botón `Buscar en YouTube` que abre `YouTubeVideoPickerModal.jsx` para buscar o pegar una URL de YouTube directamente.
-
----
-
-## 7. Reglas de Negocio & Buenas Prácticas
-
-1. **Persistencia Híbrida (Resiliencia Offline)**:
-   - El estado del frontend sincroniza primero con la base de datos SQLite y mantiene un espejo de respaldo en `localStorage` (`songbook_user_songs`, `songbook_setlists`).
-2. **Niveles de Usuario (AuthContext)**:
-   - **FREE**: Hasta 5 canciones, 2 setlists, muestra anuncios con `AdBanner.jsx`. La transposición transpone los acordes visualmente y notifica que el cambio de tono en el audio es una función Pro.
-   - **PREMIUM**: Canciones y setlists ilimitados, sin anuncios, exportación, pitch shifting de audio en tiempo real, edición visual y sincronización total.
-3. **Descarga de Audio Estrictamente On-Demand**:
-   - **NUNCA** iniciar descargas de audio de YouTube ni tareas pesadas de ML en el proceso de búsqueda o scraping.
-   - La descarga solo se dispara cuando el usuario interactúa activamente con el control de transposición (`transpose !== 0`).
-4. **Parámetros Críticos para yt-dlp (Evasión 403 YouTube)**:
-   - En `server/routes/audio.js`, `yt-dlp` debe ejecutarse siempre con `--extractor-args "youtube:player_client=android,web"` y `-f ba/b` para evitar los bloqueos `403 Forbidden` de YouTube.
-5. **Manejo de Web Audio & Tone.js**:
-   - Todo cambio de tono (`+` / `-`) ejecuta `Tone.start()` y `Tone.context.resume()` dentro del evento del usuario para cumplir con las políticas de autoplay de los navegadores.
-6. **Estética Visual Analógica**:
-   - Mantener las clases de textura de papel (`paper-texture`), fondos de escritorio de madera (`desk-surface`), sombras suaves interiores (`shadow-[inset_..._rgba(0,0,0,0.06)]`) y botones con estilo vintage moderno (tonos `stone` y `amber`).
-7. **Manipulación de DOM y Animaciones**:
-   - Usar `Framer Motion` con `perspective` para transiciones de páginas.
-   - No usar `scrollIntoView` global; utilizar scrolls locales dentro de los contenedores de páginas.
-
-
+1. **Aislamiento de Transposición**: `transpose` y `chordVariants` pertenecen exclusivamente al perfil de usuario (`UserSongPreference`) y nunca modifican el catálogo público global `Song`.
+2. **Unicidad de Foto de Artista**: Cada artista tiene una única foto canónica en la tabla `Artist`.
+3. **Unicidad de Carátula por Álbum**: Cada álbum tiene una única carátula oficial en la tabla `Album`. Las canciones apuntan a su álbum mediante `albumId`.
+4. **Sanitización AlphaTex**: Toda partitura AlphaTex debe procesarse con `alphaTexSanitizer.js` para evitar errores `AT202` y `AT205`.
+5. **Layout Persistente**: Nunca desmontar el reproductor de video de YouTube o atril al cambiar de pestaña; mantener el ciclo de vida continuo.
+6. **Mantenimiento Continuo de Docs y Skills (Auto-Sync)**: Al implementar nuevas lógicas, corregir bugs o modificar contratos de datos, el agente DEBE actualizar obligatoriamente el archivo `AGENTS.md` del módulo correspondiente y/o las skills afectadas en `.agents/skills/<skill-name>/SKILL.md` antes de dar la tarea por concluida.

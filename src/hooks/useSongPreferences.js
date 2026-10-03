@@ -8,16 +8,18 @@ import { updateSongPreferences } from '../services/persistenceApi';
  * - Chord variant selections (`chordVariants` / `selectedVariants`)
  * - User notifications for Pro audio features & feedback toasts
  */
-export function useSongPreferences({ song, isPremium = false, openUpgradeModal = null }) {
+export function useSongPreferences({ song, isPremium = false, openUpgradeModal = null, currentUser = null }) {
+  const userIdentifier = currentUser?.email || currentUser?.id || 'gabothdev@gmail.com';
+
   const getInitialTranspose = useCallback(() => {
     if (!song) return 0;
     if (song.transpose !== undefined && song.transpose !== null) {
       return parseInt(song.transpose, 10) || 0;
     }
-    const savedKey = `songbook_pref_transpose_${song.id || song.title}`;
-    const saved = localStorage.getItem(savedKey);
+    const savedKey = `songbook_pref_transpose_${userIdentifier}_${song.id || song.title}`;
+    const saved = localStorage.getItem(savedKey) || localStorage.getItem(`songbook_pref_transpose_${song.id || song.title}`);
     return saved !== null ? parseInt(saved, 10) || 0 : 0;
-  }, [song]);
+  }, [song, userIdentifier]);
 
   const getInitialChordVariants = useCallback(() => {
     if (!song) return {};
@@ -29,8 +31,8 @@ export function useSongPreferences({ song, isPremium = false, openUpgradeModal =
         /* ignore */
       }
     }
-    const savedKey = `songbook_pref_variants_${song.id || song.title}`;
-    const saved = localStorage.getItem(savedKey);
+    const savedKey = `songbook_pref_variants_${userIdentifier}_${song.id || song.title}`;
+    const saved = localStorage.getItem(savedKey) || localStorage.getItem(`songbook_pref_variants_${song.id || song.title}`);
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -39,7 +41,7 @@ export function useSongPreferences({ song, isPremium = false, openUpgradeModal =
       }
     }
     return {};
-  }, [song]);
+  }, [song, userIdentifier]);
 
   const [transpose, setTranspose] = useState(getInitialTranspose);
   const [selectedVariants, setSelectedVariants] = useState(getInitialChordVariants);
@@ -63,15 +65,17 @@ export function useSongPreferences({ song, isPremium = false, openUpgradeModal =
       onTransposeChange(nextTranspose);
     }
 
-    // Persist transpose locally
+    // Persist transpose locally per user
+    localStorage.setItem(`songbook_pref_transpose_${userIdentifier}_${song.id || song.title}`, String(nextTranspose));
     localStorage.setItem(`songbook_pref_transpose_${song.id || song.title}`, String(nextTranspose));
 
-    // Persist transpose to backend SQLite
+    // Persist transpose to backend SQLite (UserSongPreference)
     updateSongPreferences({
       id: song.id,
       title: song.title,
       artist: song.artist,
       transpose: nextTranspose,
+      user: userIdentifier,
     });
 
     // Pro tier audio notifications
@@ -94,7 +98,8 @@ export function useSongPreferences({ song, isPremium = false, openUpgradeModal =
     };
     setSelectedVariants(updated);
 
-    // Persist chord variants locally
+    // Persist chord variants locally per user
+    localStorage.setItem(`songbook_pref_variants_${userIdentifier}_${song.id || song.title}`, JSON.stringify(updated));
     localStorage.setItem(`songbook_pref_variants_${song.id || song.title}`, JSON.stringify(updated));
 
     // Optional callback to update in-memory chord definition
@@ -102,12 +107,13 @@ export function useSongPreferences({ song, isPremium = false, openUpgradeModal =
       onUpdateDefinition(clean, newVariantIndex);
     }
 
-    // Persist chord variants to backend SQLite
+    // Persist chord variants to backend SQLite (UserSongPreference)
     updateSongPreferences({
       id: song.id,
       title: song.title,
       artist: song.artist,
       chordVariants: updated,
+      user: userIdentifier,
     });
   };
 

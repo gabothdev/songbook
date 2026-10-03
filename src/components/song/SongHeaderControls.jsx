@@ -258,9 +258,61 @@ export default function SongHeaderControls({
             </span>
           )}
         </div>
-        <p className="text-xs sm:text-sm font-sans text-stone-600 mt-0.5">
-          {song.artist} {song.composer ? `• ${song.composer}` : ''}
-        </p>
+        {(() => {
+          const artistDisplay = Array.isArray(song.artists) && song.artists.length > 0
+            ? song.artists.map((a) => a.name).join(', ')
+            : (song.artist || '');
+          return (
+            <p className="text-xs sm:text-sm font-sans text-stone-600 mt-0.5">
+              {artistDisplay} {song.composer ? `• ${song.composer}` : ''}
+            </p>
+          );
+        })()}
+
+        {/* Álbum, Año y Contexto de la Versión */}
+        {(song.album || song.versionType || song.releaseYear || song.versionDetails) && (
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap text-xs font-sans">
+            {song.versionType === 'live' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-100/90 text-rose-900 border border-rose-300 text-[10px] font-bold shadow-xs">
+                <span>🎙️</span>
+                <span>En Vivo</span>
+              </span>
+            ) : song.versionType === 'soundtrack' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100/90 text-amber-900 border border-amber-300 text-[10px] font-bold shadow-xs">
+                <span>🎬</span>
+                <span>Banda Sonora</span>
+              </span>
+            ) : song.versionType === 'session' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-stone-200/90 text-stone-800 border border-stone-300 text-[10px] font-bold shadow-xs">
+                <span>📻</span>
+                <span>Sesión</span>
+              </span>
+            ) : song.versionType === 'acoustic' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-100/90 text-orange-900 border border-orange-300 text-[10px] font-bold shadow-xs">
+                <span>🪕</span>
+                <span>Acústico</span>
+              </span>
+            ) : null}
+
+            {song.album && (
+              <span className="font-serif italic text-stone-700 font-medium">
+                De: <strong className="font-bold">{song.album}</strong>
+              </span>
+            )}
+
+            {song.releaseYear && (
+              <span className="text-stone-500 font-mono text-[11px]">
+                ({song.releaseYear})
+              </span>
+            )}
+
+            {song.versionDetails && (
+              <span className="text-stone-500 italic text-[11px]">
+                • {song.versionDetails}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

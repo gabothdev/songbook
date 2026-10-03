@@ -7,65 +7,207 @@ datasource db {
   url      = "file:./dev.db"
 }
 
-model Song {
-  id          String   @id @default(cuid())
-  title       String
-  artist      String
-  content     String
-  youtubeId   String?  // ID del video de YouTube
-  syncData    String?  // JSON con los timestamps [{line: 0, time: 2.5}, ...]
-  transpose   Int?     @default(0) // Transposición semitonal guardada
-  chordVariants String? // JSON con variaciones de acordes seleccionadas {"C": 1, "G": 0}
-  originalContent String? // Respaldo de la letra original antes de editar
-  isCustom    Boolean  @default(false) // Indica si fue personalizada por el músico
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+// ------------------------------------
+// USUARIOS & MULTITENANCY
+// ------------------------------------
+model User {
+  id          String                @id @default(cuid())
+  email       String                @unique
+  name        String
+  role        String                @default("FREE") // FREE, PRO, ADMIN
+  avatar      String?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  preferences UserSongPreference[]
+  setlists    Setlist[]
   favorites   Favorite[]
-  setlistSongs SetlistSong[]
 }
 
+// ------------------------------------
+// PREFERENCIAS PERSONALES DEL USUARIO
+// ------------------------------------
+model UserSongPreference {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  songId        String
+  song          Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  
+  transpose     Int      @default(0) // Tono personal del usuario
+  chordVariants String?              // Variaciones de digitaciones elegidas {"C": 1}
+  customContent String?              // Arreglos o letra personalizada del usuario
+  isCustom      Boolean  @default(false)
+  isFavorite    Boolean  @default(false)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, songId])
+  @@index([userId])
+  @@index([songId])
+}
+
+// ------------------------------------
+// ARTISTAS & ÁLBUMES (ARTEFACTOS)
+// ------------------------------------
+model Artist {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  image     String?   // Foto única canónica del artista
+  bio       String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  albums    Album[]
+  songs     Song[]
+}
+
+model Album {
+  id             String    @id @default(cuid())
+  title          String
+  cover          String?   // Carátula única canónica del álbum
+  releaseYear    Int?
+  versionType    String?   @default("studio") // studio, live, soundtrack, acoustic, session, demo
+  versionDetails String?
+  artistId       String
+  artist         Artist    @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  songs          Song[]
+
+  @@unique([artistId, title])
+  @@index([title])
+}
+
+// ------------------------------------
+// CANCIONES (CATÁLOGO CANÓNICO)
+// ------------------------------------
+model Song {
+  id              String        @id @default(cuid())
+  title           String
+  artist          String        // Nombre canónico del artista
+  content         String        // Letra y acordes de referencia
+  youtubeId       String?
+  syncData        String?       // JSON con compases y timestamps rítmicos
+  originalContent String?       // Letra original antes de arreglos
+  isCustom        Boolean       @default(false)
+  transpose       Int?          @default(0) // Fallback global/original
+  chordVariants   String?       // Fallback global
+
+  // Metadatos y herencia de artefacto
+  artistImage     String?       // Cache/espejo de Artist.image
+  albumCover      String?       // Cache/espejo de Album.cover
+  album           String?       // Nombre del álbum
+  releaseYear     Int?
+  versionType     String?       @default("studio")
+  versionDetails  String?
+
+  albumId         String?
+  albumRel        Album?        @relation(fields: [albumId], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  userPreferences UserSongPreference[]
+  favorites       Favorite[]
+  setlistSongs    SetlistSong[]
+  artists         Artist[]
+  scoreSheets     ScoreSheet[]
+
+  @@index([title, artist])
+  @@index([youtubeId])
+  @@index([albumId])
+}
+
+// ------------------------------------
+// FAVORITOS
+// ------------------------------------
 model Favorite {
   id        String   @id @default(cuid())
-  song      Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
   songId    String
+  song      Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+
+  @@index([songId])
+  @@index([userId])
 }
 
+// ------------------------------------
+// REPERTORIOS (SETLISTS)
+// ------------------------------------
 model Setlist {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   name      String
-  createdAt DateTime @default(now())
+  userId    String?
+  user      User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
   songs     SetlistSong[]
+
+  @@index([userId])
 }
 
 model SetlistSong {
-  id        String   @id @default(cuid())
-  setlist   Setlist  @relation(fields: [setlistId], references: [id], onDelete: Cascade)
-  setlistId String
-  song      Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
-  songId    String
-  order     Int      @default(0)
+  id            String   @id @default(cuid())
+  setlistId     String
+  setlist       Setlist  @relation(fields: [setlistId], references: [id], onDelete: Cascade)
+  songId        String
+  song          Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  order         Int      @default(0)
+  transpose     Int?     @default(0) // Tono específico para este recital
+  chordVariants String?
+
+  @@index([setlistId])
+  @@index([songId])
 }
 
+// ------------------------------------
+// DICCIONARIO DE ACORDES
+// ------------------------------------
 model CustomChord {
   id         String   @id @default(cuid())
-  instrument String   // "guitar", "bandoneon", etc.
+  instrument String
   chordName  String
-  data       String   // Guardamos el JSON como String
+  data       String
   createdAt  DateTime @default(now())
 }
 
 model ChordDefinition {
-  id          String   @id @default(cuid())
-  instrument  String   @default("guitar") // "guitar", "bandoneon", "ukulele"
-  key         String   // "C", "D", "F#", "Bb", etc.
-  suffix      String   // "major", "minor", "7", "m7", "dim", "sus4", etc.
-  chordName   String   // "C", "Cm", "C7", "F#m", etc.
-  positions   String   // JSON string con las variantes [{ frets, fingers, barres, capo }, ...]
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  instrument String   @default("guitar")
+  key        String
+  suffix     String
+  chordName  String
+  positions  String
+  createdAt  DateTime @default(now())
 
   @@unique([instrument, chordName])
   @@index([chordName])
   @@index([instrument, key])
+}
+
+// ------------------------------------
+// PARTITURAS & TABS (SONGSTERR / TANGO)
+// ------------------------------------
+model ScoreSheet {
+  id           String    @id @default(cuid())
+  songsterrId  Int?      @unique
+  title        String
+  artist       String
+  defaultTrack Int?      @default(0)
+  tracks       String?
+  songData     String?
+  filePath     String?
+  
+  songId       String?
+  song         Song?     @relation(fields: [songId], references: [id], onDelete: SetNull)
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([artist, title])
+  @@index([songId])
 }

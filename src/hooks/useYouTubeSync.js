@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 
 /**
  * Custom Hook for Beat Tracking and YouTube Rhythmic Synchronization in SongBook
@@ -22,6 +22,7 @@ export function useYouTubeSync({
 }) {
   const [internalTime, setInternalTime] = useState(0);
   const [internalPlaying, setInternalPlaying] = useState(false);
+  const seekLatchRef = useRef(null);
 
   const currentTime = externalTime !== null ? externalTime : internalTime;
   const isPlaybackActive = isPlaying || internalPlaying;
@@ -153,6 +154,24 @@ export function useYouTubeSync({
   // Calculate active beat index from currentTime
   const currentBeatIndex = useMemo(() => {
     if (!compases || compases.length === 0 || currentTime < 0) return -1;
+
+    // 0. Check seek latch: protect against YouTube seek keyframe rounding and paused state jitter
+    if (seekLatchRef.current) {
+      const { beatIdx, targetTime, expiresAt } = seekLatchRef.current;
+      if (!isPlaybackActive) {
+        // While paused, lock strictly to the user-clicked beat
+        return beatIdx;
+      }
+      if (Date.now() < expiresAt) {
+        // While player is settling right after a seek, protect from snapbacks
+        if (Math.abs(currentTime - targetTime) < 0.8) {
+          return beatIdx;
+        }
+      } else {
+        seekLatchRef.current = null;
+      }
+    }
+
     const time = currentTime;
 
     // 1. Direct lookup if exact beatTimes exist (from Chordify transcription)
@@ -171,9 +190,11 @@ export function useYouTubeSync({
 
       if (flatBeats.length === 0) return -1;
 
-      let activeIdx = 0;
+      // 60ms tolerance for keyframe landing and audio-visual anticipation
+      const BEAT_EPSILON = 0.06;
+      let activeIdx = -1;
       for (let i = 0; i < flatBeats.length; i++) {
-        if (time >= flatBeats[i].time) {
+        if (time >= flatBeats[i].time - BEAT_EPSILON) {
           activeIdx = flatBeats[i].globalIdx;
         } else {
           break;
@@ -206,7 +227,7 @@ export function useYouTubeSync({
 
     const localBeatIdx = Math.floor(beatRatio * block.beatCount);
     return block.startBeatIdx + localBeatIdx;
-  }, [currentTime, timingBlocks, compases]);
+  }, [currentTime, timingBlocks, compases, isPlaybackActive]);
 
   // Helper to jump to a specific beat and time in the video
   const jumpToBeat = useCallback((beatIdx) => {
@@ -256,6 +277,13 @@ export function useYouTubeSync({
       const secondsPerBeat = 60 / (bpm || 100);
       targetTime = Math.max(0, offset + beatIdx * secondsPerBeat);
     }
+
+    // Set seek latch to guarantee the clicked beat is selected immediately
+    seekLatchRef.current = {
+      beatIdx,
+      targetTime,
+      expiresAt: Date.now() + 800,
+    };
 
     setInternalTime(targetTime);
 

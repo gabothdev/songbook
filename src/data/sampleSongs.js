@@ -44,6 +44,8 @@ export const SAMPLE_SONGS_DATA = {
     bpm: 76,
     timeSignature: '4/4',
     youtubeId: '1F8oHw1jW10',
+    artistImage: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/ce/Seru_Giran_1978.jpg/800px-Seru_Giran_1978.jpg',
+    albumCover: 'https://upload.wikimedia.org/wikipedia/en/thumb/e/e0/SeruGiran.jpg/500px-SeruGiran.jpg',
     uniqueChords: ['C', 'Em', 'F', 'G', 'Am', 'Dm'],
     sections: [
       { name: 'Intro', time: '0:00' },
@@ -117,6 +119,8 @@ Ah... te necesito tanto, no puedo vivir sin ti`
     bpm: 118,
     timeSignature: '4/4',
     youtubeId: '3U221_HkX0s',
+    artistImage: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/Almendra_1969.jpg/800px-Almendra_1969.jpg',
+    albumCover: 'https://upload.wikimedia.org/wikipedia/en/thumb/5/52/Almendra1969.jpg/500px-Almendra1969.jpg',
     uniqueChords: ['G', 'Em', 'C', 'D', 'Am'],
     sections: [
       { name: 'Intro', time: '0:00' },
@@ -153,6 +157,8 @@ Y duerme un poco y yo te cantaré`
     bpm: 128,
     timeSignature: '4/4',
     youtubeId: 'T_FkEw27XJ0',
+    artistImage: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Soda_Stereo_1985.jpg/800px-Soda_Stereo_1985.jpg',
+    albumCover: 'https://upload.wikimedia.org/wikipedia/en/thumb/4/4b/Cancion_Animal.jpg/500px-Cancion_Animal.jpg',
     uniqueChords: ['Bm', 'G', 'D', 'A'],
     sections: [
       { name: 'Riff Intro', time: '0:00' },

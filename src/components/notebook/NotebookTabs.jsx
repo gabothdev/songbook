@@ -1,12 +1,12 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { LogIn, UserPlus, Sparkles } from 'lucide-react';
+import { LogIn, UserPlus, Sparkles, BookOpen, Music2 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 
-export default function NotebookTabs({ activeTab, onTabChange }) {
+export default function NotebookTabs({ activeTab, onTabChange, mode = 'auth' }) {
   const { t } = useLanguage();
 
-  const TABS = [
+  const AUTH_TABS = [
     {
       id: 'login',
       label: t.tabLogin,
@@ -32,6 +32,27 @@ export default function NotebookTabs({ activeTab, onTabChange }) {
       accentColor: 'bg-emerald-600',
     },
   ];
+
+  const MUSICIAN_TABS = [
+    {
+      id: 'songs',
+      label: t.tabSongbook || 'Cancionero',
+      icon: BookOpen,
+      bgActive: 'bg-[#fef08a] text-stone-950 border-amber-400 shadow-lg',
+      bgInactive: 'bg-[#fef9c3]/85 text-stone-800 hover:bg-[#fef08a] border-amber-300/80',
+      accentColor: 'bg-amber-600',
+    },
+    {
+      id: 'scores',
+      label: t.tabScores || 'Partituras & Tabs',
+      icon: Music2,
+      bgActive: 'bg-[#bbf7d0] text-stone-950 border-emerald-400 shadow-lg',
+      bgInactive: 'bg-[#dcfce7]/85 text-stone-800 hover:bg-[#bbf7d0] border-emerald-300/80',
+      accentColor: 'bg-emerald-600',
+    },
+  ];
+
+  const TABS = mode === 'musician' ? MUSICIAN_TABS : AUTH_TABS;
 
   return (
     <div className="absolute left-full top-12 sm:top-16 flex flex-col gap-3 z-30 -ml-1">

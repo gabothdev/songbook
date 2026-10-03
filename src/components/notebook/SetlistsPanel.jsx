@@ -253,50 +253,76 @@ export default function SetlistsPanel({
               {/* Setlist Songs Ordered List */}
               <div className="space-y-1.5 max-h-[250px] xl:max-h-[290px] overflow-y-auto pr-1">
                 {activeSetlist.songs && activeSetlist.songs.length > 0 ? (
-                  activeSetlist.songs.map((song, sIdx) => (
-                    <div
-                      key={song.id || sIdx}
-                      className="p-2.5 bg-white/90 rounded-xl border border-stone-200 shadow-sm flex items-center justify-between hover:bg-white hover:border-amber-200 transition-all group"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="font-mono text-xs font-bold text-stone-400 w-4 text-center">
-                          {sIdx + 1}
-                        </span>
+                  activeSetlist.songs.map((song, sIdx) => {
+                    const isScoreItem = Boolean(
+                      song.isScore ||
+                      song.type === 'score' ||
+                      song.type === 'tango_archive' ||
+                      song.songsterrId ||
+                      song.tangoId ||
+                      (typeof song.content === 'string' && song.content.startsWith('[SCORE_SHEET]'))
+                    );
+                    const isTangoItem = song.type === 'tango_archive' || Boolean(song.tangoId) || (typeof song.content === 'string' && song.content.includes('"tango_archive"'));
 
-                        <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-900 flex items-center justify-center font-mono text-[11px] font-bold border border-amber-300 flex-shrink-0">
-                          {song.key || 'C'}
+                    return (
+                      <div
+                        key={song.id || sIdx}
+                        className="p-2.5 bg-white/90 rounded-xl border border-stone-200 shadow-sm flex items-center justify-between hover:bg-white hover:border-amber-200 transition-all group"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="font-mono text-xs font-bold text-stone-400 w-4 text-center">
+                            {sIdx + 1}
+                          </span>
+
+                          {isTangoItem ? (
+                            <div className="px-1.5 py-1 rounded-lg bg-rose-100 text-rose-900 border border-rose-300 font-sans text-[10px] font-black flex items-center gap-1 flex-shrink-0 shadow-2xs" title="Partitura de Archivo Histórico de Tango">
+                              <span>🎻</span>
+                              <span>TANGO</span>
+                            </div>
+                          ) : isScoreItem ? (
+                            <div className="px-1.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-300 font-sans text-[10px] font-black flex items-center gap-1 flex-shrink-0 shadow-2xs" title="Tablatura / Partitura Interactiva">
+                              <span>🎸</span>
+                              <span>TAB</span>
+                            </div>
+                          ) : (
+                            <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-900 flex items-center justify-center font-mono text-[11px] font-bold border border-amber-300 flex-shrink-0" title={`Tono: ${song.key || 'C'}`}>
+                              {song.key || 'C'}
+                            </div>
+                          )}
+
+                          <div className="min-w-0">
+                            <h4 className="font-serif font-bold text-xs text-stone-900 truncate">
+                              {song.title}
+                            </h4>
+                            <p className="text-[10px] font-sans text-stone-500 truncate">
+                              {(Array.isArray(song.artists) && song.artists.length > 0
+                                ? song.artists.map((a) => a.name).join(', ')
+                                : (song.artist || song.composer))} {isTangoItem ? '• Partitura Tango' : isScoreItem ? '• Tablatura / Partitura' : ''}
+                            </p>
+                          </div>
                         </div>
 
-                        <div className="min-w-0">
-                          <h4 className="font-serif font-bold text-xs text-stone-900 truncate">
-                            {song.title}
-                          </h4>
-                          <p className="text-[10px] font-sans text-stone-500 truncate">
-                            {song.artist}
-                          </p>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => onPlaySong(song)}
+                            className="p-1.5 bg-stone-100 hover:bg-stone-900 text-stone-600 hover:text-amber-300 rounded-lg transition-colors cursor-pointer"
+                            title={isScoreItem ? "Abrir partitura en el atril" : "Abrir letra y acordes"}
+                          >
+                            <Play className="w-3 h-3 fill-current" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onRemoveSongFromSetlist(activeSetlist.name, song.id)}
+                            className="p-1.5 text-stone-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                            title="Quitar del setlist"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => onPlaySong(song)}
-                          className="p-1.5 bg-stone-100 hover:bg-stone-900 text-stone-600 hover:text-amber-300 rounded-lg transition-colors cursor-pointer"
-                          title="Abrir acordes de esta canción"
-                        >
-                          <Play className="w-3 h-3 fill-current" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onRemoveSongFromSetlist(activeSetlist.name, song.id)}
-                          className="p-1.5 text-stone-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                          title="Quitar del setlist"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <div className="py-6 px-4 text-center bg-amber-50/60 rounded-xl border border-dashed border-amber-300 text-stone-600 font-sans text-xs">
                     <p className="font-semibold text-stone-800">Setlist sin canciones</p>

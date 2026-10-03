@@ -80,14 +80,20 @@ export async function restoreOriginalSong({ id, title, artist }) {
 }
 
 /**
- * Updates a song's transpose and chord variant preferences
+ * Updates a song's transpose, chord variant preferences, artwork and album/version metadata
  */
-export async function updateSongPreferences({ id, title, artist, transpose, chordVariants }) {
+export async function updateSongPreferences({ 
+  id, title, artist, content, youtubeId, syncData, transpose, chordVariants, artistImage, albumCover,
+  album, releaseYear, versionType, versionDetails, user, userId, isCustom 
+}) {
   try {
     const res = await fetch(`${BASE_URL}/songs/preferences`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, title, artist, transpose, chordVariants }),
+      body: JSON.stringify({ 
+        id, title, artist, content, youtubeId, syncData, transpose, chordVariants, artistImage, albumCover,
+        album, releaseYear, versionType, versionDetails, user, userId, isCustom 
+      }),
     });
     if (res.ok) return await res.json();
   } catch (err) {
@@ -250,3 +256,21 @@ export async function saveCustomChord({ instrument, chordName, data }) {
   }
   return null;
 }
+
+/**
+ * Updates an artist's image in the database
+ */
+export async function updateArtistImage({ id, name, image }) {
+  try {
+    const res = await fetch(`${BASE_URL}/artists/update-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name, image }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('[Persistence API] Failed to update artist image:', err.message);
+  }
+  return null;
+}
+
