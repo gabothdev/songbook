@@ -33,8 +33,14 @@ Esta skill guía el mantenimiento y evolución de la base de datos relacional Pr
    cmd.exe /c npm run dev
    ```
 
-## 3. Verificación
-Comprobar integridad consultando la base de datos:
-```bash
-node -e "import('./server/services/db.js').then(async m => { console.log(await m.default.user.findMany()); process.exit(0); })"
-```
+## 3. Verificación y Panel Dev Studio
+- **API Dev Studio**:
+  - `GET /api/dev/stats`: Estadísticas de tablas SQLite (`Song`, `Album`, `Artist`, `User`, `UserSongPreference`, etc.).
+  - `GET /api/dev/tables/:table`: CRUD completo y paginado con búsquedas y filtros (`filter=sync|lyrics|youtube|score`).
+  - `GET /api/dev/albums/suggest`: Sugerencias de álbumes para autocompletado.
+  - `GET /api/dev/artists/suggest`: Sugerencias de artistas vinculados.
+  - `POST /api/dev/backup`: Snapshot instantáneo de `dev.db`.
+- **Comprobar integridad desde CLI**:
+  ```bash
+  node -e "import('./server/services/db.js').then(async m => { console.log(await m.default.user.findMany()); process.exit(0); })"
+  ```

@@ -8,16 +8,16 @@ import {
   Plus,
   Sparkles,
   Crown,
-  Youtube,
   Edit3,
 } from 'lucide-react';
 import { transposeChord } from '../../utils/music';
+import { useAuth } from '../../context/AuthContext';
 
 /**
  * SongHeaderControls Component
  * Fixed-dimension utility bar:
  * - Back button / Exit stage
- * - Edit custom version (Pro feature ✏️)
+ * - Edit song button (Admin feature ✏️)
  * - Toggle favorite (⭐)
  * - Add to setlist popover
  * - Transpose controls (+/-) (Fixed width, zero layout shift)
@@ -37,6 +37,7 @@ export default function SongHeaderControls({
   isPitchShiftActive = false,
   isLoadingAudio = false,
   isPremium = false,
+  isAdmin: propIsAdmin,
   openUpgradeModal = null,
   isVideoPaperOpen = true,
   onOpenVideoPaper = null,
@@ -44,13 +45,12 @@ export default function SongHeaderControls({
   isEditMode = false,
   onToggleEditMode = null,
 }) {
+  const { isAdmin: authIsAdmin } = useAuth();
+  const isAdmin = propIsAdmin !== undefined ? propIsAdmin : authIsAdmin;
   const [isAddToSetlistOpen, setIsAddToSetlistOpen] = useState(false);
 
   const handleEditClick = () => {
-    if (!isPremium) {
-      if (openUpgradeModal) openUpgradeModal();
-      return;
-    }
+    if (!isAdmin) return;
     if (onToggleEditMode) {
       onToggleEditMode();
     }
@@ -80,21 +80,22 @@ export default function SongHeaderControls({
         </button>
 
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          {/* Edit Custom Arrangement Button (Pro Feature) */}
-          <button
-            type="button"
-            onClick={handleEditClick}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold font-sans transition-all cursor-pointer shadow-sm ${
-              isEditMode
-                ? 'bg-amber-600 border-amber-700 text-white hover:bg-amber-700'
-                : 'bg-white hover:bg-stone-50 border-stone-300 text-stone-700'
-            }`}
-            title={isEditMode ? 'Cerrar Modo Edición' : 'Editar letra, compases y crear tu versión personal (Pro)'}
-          >
-            <Edit3 className={`w-3.5 h-3.5 ${isEditMode ? 'text-white' : 'text-amber-700'}`} />
-            <span>{isEditMode ? 'Editando' : 'Editar'}</span>
-            {!isPremium && <Crown className="w-3 h-3 text-amber-500 fill-amber-400" />}
-          </button>
+          {/* Edit Song Button (Exclusively for Admins) */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={handleEditClick}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold font-sans transition-all cursor-pointer shadow-sm ${
+                isEditMode
+                  ? 'bg-amber-600 border-amber-700 text-white hover:bg-amber-700'
+                  : 'bg-white hover:bg-stone-50 border-stone-300 text-stone-700'
+              }`}
+              title={isEditMode ? 'Cerrar Modo Edición' : 'Editar letra, compases y estructura de la canción (Admin)'}
+            >
+              <Edit3 className={`w-3.5 h-3.5 ${isEditMode ? 'text-white' : 'text-amber-700'}`} />
+              <span>{isEditMode ? 'Editando' : 'Editar'}</span>
+            </button>
+          )}
 
           {/* Favorite Toggle Button */}
           {onToggleFavorite && (
@@ -227,18 +228,6 @@ export default function SongHeaderControls({
               +
             </button>
           </div>
-
-          {/* Floating Video Toggle Button */}
-          {song.youtubeId && !isVideoPaperOpen && onOpenVideoPaper && (
-            <button
-              type="button"
-              onClick={onOpenVideoPaper}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-900 border border-red-300 rounded-xl text-xs font-bold font-sans transition-colors cursor-pointer shadow-sm"
-            >
-              <Youtube className="w-3.5 h-3.5 text-red-600" />
-              <span className="hidden sm:inline">Ver Video</span>
-            </button>
-          )}
         </div>
       </div>
 

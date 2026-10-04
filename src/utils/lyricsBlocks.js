@@ -282,9 +282,11 @@ export function reconstructTextFromBlocks(sections) {
 }
 
 /**
- * Determines if visual sections represent an instrumental / empty lyric song
+ * Determines if visual sections represent an unconfigured / empty lyric song
+ * that should display the prompt to add lyrics or mark as completely instrumental.
  */
-export function isInstrumentalSong(sections) {
+export function isInstrumentalSong(sections, isExplicitInstrumental = false) {
+  if (isExplicitInstrumental) return false;
   if (!sections || sections.length === 0) return true;
   let wordCount = 0;
   sections.forEach((sec) => {

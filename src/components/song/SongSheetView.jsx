@@ -9,6 +9,7 @@ import {
   LogOut,
   Check,
   Sparkles,
+  Play,
 } from 'lucide-react';
 import SpiralRings from '../notebook/SpiralRings';
 import FloatingVideoPaper from './FloatingVideoPaper';
@@ -23,7 +24,7 @@ import useYouTubeSync from '../../hooks/useYouTubeSync';
 import { CHORD_DATABASE, SAMPLE_SONGS_DATA } from '../../data/sampleSongs';
 import { transposeChord, normalizeChordName } from '../../utils/music';
 import { playStrummedChord, getNotesFromFrets } from '../../utils/audioPlayer';
-import { parseSongTextToGrid, alignCompasesWithSongSections, formatCompasesToText } from '../../utils/gridParser';
+import { parseSongTextToGrid, alignCompasesWithSongSections, formatCompasesToText, getSongBpm, updateTextBpm, doubleGridBpm, halveGridBpm } from '../../utils/gridParser';
 import { lookupChord, saveCustomSongVersion, restoreOriginalSong, saveSong, updateSongPreferences } from '../../services/persistenceApi';
 import SongLyricsEditor from './SongLyricsEditor';
 import SongLyricsVisualEditor from './SongLyricsVisualEditor';
@@ -43,7 +44,7 @@ export default function SongSheetView({
   setlists = [],
   onAddSongToSetlist = null,
 }) {
-  const { currentUser, openUpgradeModal, isPro } = useAuth();
+  const { currentUser, openUpgradeModal, isPro, isAdmin } = useAuth();
   const isPremium = isPro || currentUser?.tier === 'PREMIUM';
   const { instrument } = useInstrument();
 
@@ -67,6 +68,7 @@ export default function SongSheetView({
   // Song Content & Custom Arrangement State
   const [currentContent, setCurrentContent] = useState(song.content || '');
   const [isCustom, setIsCustom] = useState(Boolean(song.isCustom));
+  const [isInstrumental, setIsInstrumental] = useState(Boolean(song.isInstrumental));
   const [originalContent, setOriginalContent] = useState(song.originalContent || null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [draftContent, setDraftContent] = useState(song.content || '');
@@ -248,6 +250,43 @@ export default function SongSheetView({
     return transposedCompases.flatMap((m) => m.acordes);
   }, [transposedCompases]);
 
+  // Current song BPM derived from lyrics metadata ([BPM @ 120]) with fallback
+  const currentBpm = useMemo(() => {
+    return getSongBpm(draftContent || currentContent || song.content, 100);
+  }, [draftContent, currentContent, song.content]);
+
+  // Handler to double (x2) or halve (/2) BPM while subdividing or merging measures
+  const handleScaleBpm = useCallback(
+    (factor) => {
+      const rawContent = draftContent || currentContent || song.content || '';
+      const oldBpm = getSongBpm(rawContent, 100);
+      const newBpm = Math.max(30, Math.min(300, Math.round(oldBpm * factor)));
+      const updatedText = updateTextBpm(rawContent, newBpm);
+
+      setDraftContent(updatedText);
+      setCurrentContent(updatedText);
+
+      let updatedCompases = null;
+      if (factor === 2) {
+        updatedCompases = doubleGridBpm(activeCompases || parsedCompases);
+      } else if (factor === 0.5) {
+        updatedCompases = halveGridBpm(activeCompases || parsedCompases);
+      }
+
+      if (updatedCompases && updatedCompases.length > 0) {
+        setActiveCompases(updatedCompases);
+      }
+
+      setFeedbackToast(
+        factor === 2
+          ? `BPM duplicado a ${newBpm} (compases subdivididos x2)`
+          : `BPM dividido a ${newBpm} (compases fusionados ÷2)`
+      );
+      setTimeout(() => setFeedbackToast(null), 3000);
+    },
+    [draftContent, currentContent, song.content, activeCompases, parsedCompases]
+  );
+
   // Sync hook for tracking active beat from YouTube or metronome
   const {
     isPlaybackActive,
@@ -258,7 +297,7 @@ export default function SongSheetView({
   } = useYouTubeSync({
     playerInstance,
     totalBeats,
-    bpm: song.bpm || 100,
+    bpm: currentBpm,
     youtubeId: currentYouTubeId || '',
     compases: transposedCompases,
     isPlaying: isMetronomeActive || isAutoScrolling,
@@ -469,6 +508,9 @@ export default function SongSheetView({
         content: draftContent,
         syncData: activeCompases ? JSON.stringify(activeCompases) : (song.syncData || null),
         originalContent: backupOriginal,
+        isInstrumental: Boolean(isInstrumental || song.isInstrumental),
+        user: currentUser?.email,
+        userId: currentUser?.id,
       });
 
       setCurrentContent(draftContent);
@@ -477,12 +519,42 @@ export default function SongSheetView({
         setOriginalContent(backupOriginal);
       }
       setIsEditMode(false);
-      setFeedbackToast('¡Arreglo personal guardado!');
+      setFeedbackToast('¡Cambios guardados con éxito!');
       setTimeout(() => setFeedbackToast(null), 2500);
     } catch (err) {
-      console.error('[SongSheetView] Error saving custom song:', err);
+      console.error('[SongSheetView] Error saving song:', err);
+      setFeedbackToast(err.message || 'Error al guardar la canción');
+      setTimeout(() => setFeedbackToast(null), 3000);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleMarkAsInstrumental = async (newContent, targetIsInstrumental = true) => {
+    setIsInstrumental(targetIsInstrumental);
+    const contentToSave = newContent || draftContent;
+    setDraftContent(contentToSave);
+    setCurrentContent(contentToSave);
+
+    try {
+      const backupOriginal = originalContent || song.originalContent || song.content;
+      await saveCustomSongVersion({
+        id: song.id,
+        title: song.title,
+        artist: song.artist,
+        content: contentToSave,
+        syncData: activeCompases ? JSON.stringify(activeCompases) : (song.syncData || null),
+        originalContent: backupOriginal,
+        isInstrumental: targetIsInstrumental,
+        user: currentUser?.email,
+        userId: currentUser?.id,
+      });
+      setFeedbackToast(targetIsInstrumental ? '¡Canción configurada como instrumental!' : '¡Letra añadida a la canción!');
+      setTimeout(() => setFeedbackToast(null), 2500);
+    } catch (err) {
+      console.error('[SongSheetView] Error updating instrumental state:', err);
+      setFeedbackToast(err.message || 'Error al actualizar la canción');
+      setTimeout(() => setFeedbackToast(null), 3000);
     }
   };
 
@@ -493,6 +565,8 @@ export default function SongSheetView({
         id: song.id,
         title: song.title,
         artist: song.artist,
+        user: currentUser?.email,
+        userId: currentUser?.id,
       });
       const restoredText = res?.song?.content || originalContent || song.originalContent;
       if (restoredText) {
@@ -500,11 +574,14 @@ export default function SongSheetView({
         setDraftContent(restoredText);
       }
       setIsCustom(false);
+      setIsInstrumental(Boolean(res?.song?.isInstrumental));
       setIsEditMode(false);
       setFeedbackToast('Versión original restaurada');
       setTimeout(() => setFeedbackToast(null), 2500);
     } catch (err) {
       console.error('[SongSheetView] Error restoring song:', err);
+      setFeedbackToast(err.message || 'Error al restaurar la canción');
+      setTimeout(() => setFeedbackToast(null), 3000);
     } finally {
       setIsSaving(false);
     }
@@ -1022,6 +1099,10 @@ export default function SongSheetView({
               }
               onSelectSection={handleSelectSection}
               onSelectChord={handlePlayChord}
+              isInstrumental={isInstrumental}
+              onMarkAsInstrumental={handleMarkAsInstrumental}
+              currentBpm={currentBpm}
+              onScaleBpm={handleScaleBpm}
             />
           ) : (
             <div className={`${mobilePage === 'lyrics' ? 'flex' : 'hidden'} md:flex flex-col justify-between flex-1 min-w-0 bg-[#fcf9f2] rounded-2xl md:rounded-r-none md:rounded-l-2xl shadow-[inset_-10px_0_15px_rgba(0,0,0,0.06)] border border-stone-300 md:border-r-0 overflow-hidden paper-texture p-7 lg:p-9 min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] relative z-10`}>
@@ -1043,6 +1124,7 @@ export default function SongSheetView({
                   isLoadingAudio={isLoadingAudio}
                   pitchShiftStatus={pitchShiftStatus}
                   isPremium={isPremium}
+                  isAdmin={isAdmin}
                   openUpgradeModal={openUpgradeModal}
                   isVideoPaperOpen={isVideoPaperOpen}
                   onOpenVideoPaper={() => setIsVideoPaperOpen(true)}
@@ -1092,8 +1174,8 @@ export default function SongSheetView({
             isPlaybackActive={isPlaybackActive}
             transposedCompases={transposedCompases}
             currentBeatIndex={currentBeatIndex}
-            onBeatClick={(chord, idx, measure) => {
-              if (chord && chord !== '𝄾' && chord !== '𝄽') {
+            onBeatClick={(chord, idx, measure, playSound = true) => {
+              if (playSound && chord && chord !== '𝄾' && chord !== '𝄽') {
                 handlePlayChord(chord);
               }
               const targetTime = jumpToBeat(idx);
@@ -1119,8 +1201,46 @@ export default function SongSheetView({
             onSetTimestamp={handleSetMeasureTimestamp}
             onAddMeasure={handleAddMeasureToSection}
             onUpdateChord={handleUpdateBeatGridChord}
+            currentBpm={currentBpm}
+            onScaleBpm={handleScaleBpm}
           />
         </div>
+
+        {/* ================= FLOATING VIDEO TAB / ETIQUETA (BOTTOM-RIGHT NOTEBOOK EDGE) ================= */}
+        <AnimatePresence>
+          {currentYouTubeId && !isVideoPaperOpen && (
+            <motion.div
+              initial={{ opacity: 0, x: -16 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -16 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 25 }}
+              className="absolute left-[calc(100%+4px)] sm:left-[calc(100%+10px)] lg:left-[calc(100%+12px)] bottom-6 sm:bottom-8 z-30 select-none"
+            >
+              <motion.button
+                type="button"
+                onClick={() => setIsVideoPaperOpen(true)}
+                whileHover={{ x: 4 }}
+                whileTap={{ scale: 0.94 }}
+                className="relative flex items-center justify-center p-2.5 sm:p-3 bg-[#ffedd5]/95 hover:bg-[#fed7aa] text-stone-900 border-y border-r border-orange-300/90 rounded-r-xl shadow-lg transition-colors cursor-pointer select-none group"
+                style={{
+                  boxShadow: '3px 4px 12px rgba(0,0,0,0.22)',
+                }}
+                title={isPlaybackActive ? "Video en reproducción • Clic para ver" : "Ver Video"}
+                aria-label="Ver Video"
+              >
+                {/* Colored left strip indicating notebook attachment */}
+                <div className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r bg-red-600" />
+                <Play className={`w-5 h-5 fill-red-600 text-red-600 translate-x-0.5 group-hover:scale-110 transition-transform ${isPlaybackActive ? 'animate-pulse' : ''}`} />
+                {isPlaybackActive && (
+                  <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-600" />
+                  </span>
+                )}
+              </motion.button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* ================= FLOATING / PINNED PAPER SCRAP WITH YOUTUBE VIDEO ================= */}

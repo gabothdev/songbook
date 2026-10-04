@@ -63,8 +63,14 @@ export default function SongLyricsVisualEditor({
   activeSectionName = null,
   onSelectSection = null,
   onSelectChord = null,
+  isInstrumental: initialIsInstrumental = false,
+  onMarkAsInstrumental = null,
+  currentBpm = 100,
+  onScaleBpm = null,
   className = '',
 }) {
+  const [isExplicitInstrumental, setIsExplicitInstrumental] = useState(Boolean(initialIsInstrumental));
+
   const visualSections = useMemo(() => {
     return parseLyricsToVisualBlocks(draftContent);
   }, [draftContent]);
@@ -161,8 +167,24 @@ export default function SongLyricsVisualEditor({
   }, [handleUndo, handleRedo]);
 
   const isInstrumental = useMemo(() => {
-    return isInstrumentalSong(visualSections);
-  }, [visualSections]);
+    return isInstrumentalSong(visualSections, isExplicitInstrumental);
+  }, [visualSections, isExplicitInstrumental]);
+
+  const handleMarkAsInstrumental = () => {
+    setIsExplicitInstrumental(true);
+    let newContent = draftContent;
+
+    // Si no hay secciones o el contenido está casi vacío, generar una plantilla de secciones instrumentales
+    if (!visualSections || visualSections.length === 0 || visualSections.every((s) => s.lines.length === 0)) {
+      newContent = '[Intro]\n[Tema A]\n[Solo]\n[Final]';
+      updateContentWithHistory(newContent);
+    }
+
+    if (onMarkAsInstrumental) {
+      onMarkAsInstrumental(newContent);
+    }
+    showToast('🎵 Marcada como completamente instrumental');
+  };
 
   // Updates a specific word's chord (and clears source if dragged from another word/slot)
   const handleAssignChordToWord = (secIdx, lineIdx, wordId, chordName, sourceData = null) => {
@@ -735,6 +757,31 @@ export default function SongLyricsVisualEditor({
               </button>
             )}
 
+            {/* BPM Scaling Controls */}
+            {onScaleBpm && (
+              <div className="flex items-center bg-stone-100 border border-stone-300 rounded-lg p-0.5 text-xs font-mono shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => onScaleBpm(0.5)}
+                  className="px-1.5 py-0.5 hover:bg-stone-200 text-stone-700 font-bold rounded transition-colors cursor-pointer"
+                  title="Dividir BPM a la mitad (÷2) y fusionar compases"
+                >
+                  ÷2
+                </button>
+                <span className="px-1.5 py-0.5 text-[11px] font-bold text-amber-950 font-sans border-x border-stone-200">
+                  {currentBpm || 100} BPM
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onScaleBpm(2)}
+                  className="px-1.5 py-0.5 hover:bg-stone-200 text-stone-700 font-bold rounded transition-colors cursor-pointer"
+                  title="Duplicar BPM (x2) y subdividir compases"
+                >
+                  x2
+                </button>
+              </div>
+            )}
+
             {/* Undo / Redo Buttons */}
             <div className="flex items-center gap-0.5 bg-stone-100 border border-stone-300 rounded-lg p-0.5 shadow-2xs">
               <button
@@ -759,6 +806,23 @@ export default function SongLyricsVisualEditor({
           </div>
 
           <div className="flex items-center gap-2">
+            {isExplicitInstrumental && (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-100/80 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-sans font-bold shadow-2xs">
+                <Music2 className="w-3 h-3 text-amber-700" />
+                <span className="hidden sm:inline">Instrumental</span>
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setIsAddLyricsModalOpen(true)}
+              className="flex items-center gap-1 px-2 py-1 text-xs font-sans font-bold text-amber-900 hover:text-amber-950 bg-amber-100/70 hover:bg-amber-200 rounded-lg border border-amber-300 transition-colors cursor-pointer"
+              title="Añadir o pegar letra para esta canción"
+            >
+              <FileText className="w-3 h-3 text-amber-800" />
+              <span className="hidden sm:inline">Añadir Letra</span>
+            </button>
+
             {hasOriginal && (
               <button
                 type="button"
@@ -845,14 +909,26 @@ export default function SongLyricsVisualEditor({
                 Esta canción contiene compases rítmicos en el BeatGrid. Puedes tocarla instrumentalmente o añadirle la letra para acoplarle los acordes.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsAddLyricsModalOpen(true)}
-              className="px-4 py-2 bg-amber-800 hover:bg-amber-900 text-white rounded-xl text-xs font-bold font-sans shadow transition-all cursor-pointer inline-flex items-center gap-1.5 active:scale-95"
-            >
-              <FileText className="w-4 h-4" />
-              <span>➕ Añadir Letra a esta Canción</span>
-            </button>
+            <div className="flex items-center justify-center gap-2.5 flex-wrap pt-1">
+              <button
+                type="button"
+                onClick={() => setIsAddLyricsModalOpen(true)}
+                className="px-4 py-2 bg-amber-800 hover:bg-amber-900 text-white rounded-xl text-xs font-bold font-sans shadow transition-all cursor-pointer inline-flex items-center gap-1.5 active:scale-95"
+              >
+                <FileText className="w-4 h-4" />
+                <span>➕ Añadir Letra a esta Canción</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleMarkAsInstrumental}
+                className="px-4 py-2 bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 rounded-xl text-xs font-bold font-sans shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5 active:scale-95"
+                title="Estructurar y editar esta canción como una obra completamente instrumental"
+              >
+                <Music2 className="w-4 h-4 text-amber-700" />
+                <span>Completamente instrumental</span>
+              </button>
+            </div>
           </div>
         ) : (
           /* Visual Lyrics Canvas Matching Viewer's 90° Rotated Gutter */
@@ -1190,6 +1266,10 @@ export default function SongLyricsVisualEditor({
         onClose={() => setIsAddLyricsModalOpen(false)}
         onSaveLyrics={(newLyrics) => {
           updateContentWithHistory(newLyrics);
+          setIsExplicitInstrumental(false);
+          if (onMarkAsInstrumental) {
+            onMarkAsInstrumental(newLyrics, false);
+          }
           setIsAddLyricsModalOpen(false);
           showToast('Letra agregada con éxito');
         }}

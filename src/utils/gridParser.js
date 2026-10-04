@@ -398,3 +398,153 @@ export function formatCompasesToText(compases) {
   return textOutput.trim();
 }
 
+/**
+ * Extrae el BPM de un texto de canción buscando [BPM @ 120] o [BPM: 120]
+ */
+export function getSongBpm(text, fallback = 100) {
+  if (!text || typeof text !== 'string') return fallback;
+  const match = text.match(/\[\s*BPM\s*[@:]?\s*(\d+)\s*\]/i);
+  return match ? parseInt(match[1], 10) : fallback;
+}
+
+/**
+ * Actualiza o inserta la etiqueta [BPM @ newBpm] en el texto de la canción
+ */
+export function updateTextBpm(text, newBpm) {
+  if (!text || typeof text !== 'string') return `[BPM @ ${newBpm}]\n`;
+  const cleanBpm = Math.round(newBpm);
+  if (/\[\s*BPM\s*[@:]?\s*\d+\s*\]/i.test(text)) {
+    return text.replace(/\[\s*BPM\s*[@:]?\s*\d+\s*\]/i, `[BPM @ ${cleanBpm}]`);
+  }
+  return `[BPM @ ${cleanBpm}]\n${text}`;
+}
+
+/**
+ * Duplica el tempo (BPM x2) subdividiendo cada compás en dos compases de 4 tiempos.
+ * Conserva la duración total y la sincronización temporal exacta de los beatTimes.
+ */
+export function doubleGridBpm(compases) {
+  if (!compases || !Array.isArray(compases)) return [];
+  const result = [];
+  let nextId = 1;
+
+  for (let i = 0; i < compases.length; i++) {
+    const c = compases[i];
+    const chords = c.acordes || ['𝄾', '𝄾', '𝄾', '𝄾'];
+    const times = c.beatTimes;
+    const nextCompas = compases[i + 1];
+    const nextStartTime = nextCompas?.beatTimes?.[0] ?? (times && times.length >= 2 ? times[times.length - 1] + (times[times.length - 1] - times[0]) / 3 : null);
+
+    // Compás A: primeros dos tiempos expandidos a 4 tiempos
+    const chordsA = [
+      chords[0] || '𝄾',
+      chords[0] || '𝄾',
+      chords[1] || chords[0] || '𝄾',
+      chords[1] || chords[0] || '𝄾'
+    ];
+
+    let beatTimesA = null;
+    if (Array.isArray(times) && times.length >= 4) {
+      const t0 = times[0];
+      const t1 = times[1];
+      const t2 = times[2];
+      beatTimesA = [
+        Number(t0.toFixed(2)),
+        Number(((t0 + t1) / 2).toFixed(2)),
+        Number(t1.toFixed(2)),
+        Number(((t1 + t2) / 2).toFixed(2))
+      ];
+    }
+
+    result.push({
+      id: nextId++,
+      seccion: c.seccion,
+      secTime: c.secTime !== undefined ? c.secTime : null,
+      acordes: chordsA,
+      ...(beatTimesA ? { beatTimes: beatTimesA } : {}),
+      lyric: c.lyric || undefined
+    });
+
+    // Compás B: últimos dos tiempos expandidos a 4 tiempos
+    const chordsB = [
+      chords[2] || chords[1] || '𝄾',
+      chords[2] || chords[1] || '𝄾',
+      chords[3] || chords[2] || '𝄾',
+      chords[3] || chords[2] || '𝄾'
+    ];
+
+    let beatTimesB = null;
+    if (Array.isArray(times) && times.length >= 4) {
+      const t2 = times[2];
+      const t3 = times[3];
+      const tNext = nextStartTime ?? (t3 + (t3 - t2));
+      beatTimesB = [
+        Number(t2.toFixed(2)),
+        Number(((t2 + t3) / 2).toFixed(2)),
+        Number(t3.toFixed(2)),
+        Number(((t3 + tNext) / 2).toFixed(2))
+      ];
+    }
+
+    result.push({
+      id: nextId++,
+      seccion: c.seccion,
+      secTime: null,
+      acordes: chordsB,
+      ...(beatTimesB ? { beatTimes: beatTimesB } : {})
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Divide el tempo a la mitad (BPM ÷2) fusionando compases consecutivos de a pares en 1 compás de 4 tiempos.
+ */
+export function halveGridBpm(compases) {
+  if (!compases || !Array.isArray(compases)) return [];
+  const result = [];
+  let nextId = 1;
+
+  for (let i = 0; i < compases.length; i += 2) {
+    const cA = compases[i];
+    const cB = compases[i + 1];
+
+    if (!cB) {
+      result.push({ ...cA, id: nextId++ });
+      break;
+    }
+
+    const chordsA = cA.acordes || [];
+    const chordsB = cB.acordes || [];
+    const mergedChords = [
+      chordsA[0] || '𝄾',
+      chordsA[2] || chordsA[1] || chordsA[0] || '𝄾',
+      chordsB[0] || '𝄾',
+      chordsB[2] || chordsB[1] || chordsB[0] || '𝄾'
+    ];
+
+    let mergedBeatTimes = null;
+    if (cA.beatTimes && cB.beatTimes) {
+      mergedBeatTimes = [
+        cA.beatTimes[0],
+        cA.beatTimes[2] ?? cA.beatTimes[1],
+        cB.beatTimes[0],
+        cB.beatTimes[2] ?? cB.beatTimes[1]
+      ];
+    }
+
+    result.push({
+      id: nextId++,
+      seccion: cA.seccion,
+      secTime: cA.secTime !== undefined ? cA.secTime : null,
+      acordes: mergedChords,
+      ...(mergedBeatTimes ? { beatTimes: mergedBeatTimes } : {}),
+      lyric: cA.lyric || cB.lyric || undefined
+    });
+  }
+
+  return result;
+}
+
+

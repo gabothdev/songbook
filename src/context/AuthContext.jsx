@@ -43,6 +43,7 @@ TIER_LIMITS.PREMIUM = TIER_LIMITS.PRO;
 
 const DEFAULT_USERS = {
   'gabothdev@gmail.com': {
+    id: 'user_admin_gabothdev',
     name: 'Gabriel (GabothDev)',
     email: 'gabothdev@gmail.com',
     instrument: 'Guitarra & Bandoneón',

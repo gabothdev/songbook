@@ -26,14 +26,21 @@ import {
   Eye,
   Sliders,
   Sparkles,
-  X
+  X,
+  Disc,
+  User,
+  UserCheck,
+  Filter
 } from 'lucide-react';
 import { config } from '../../config';
 
 const TABLES = [
   { id: 'songs', label: 'Canciones', model: 'Song', icon: Music, color: 'text-amber-600 bg-amber-50' },
+  { id: 'albums', label: 'Álbumes', model: 'Album', icon: Disc, color: 'text-rose-600 bg-rose-50' },
   { id: 'artists', label: 'Artistas', model: 'Artist', icon: Users, color: 'text-teal-600 bg-teal-50' },
   { id: 'setlists', label: 'Repertorios', model: 'Setlist', icon: ListMusic, color: 'text-indigo-600 bg-indigo-50' },
+  { id: 'users', label: 'Usuarios', model: 'User', icon: User, color: 'text-sky-600 bg-sky-50' },
+  { id: 'userpreferences', label: 'Preferencias Usuario', model: 'UserSongPreference', icon: UserCheck, color: 'text-blue-600 bg-blue-50' },
   { id: 'favorites', label: 'Favoritos', model: 'Favorite', icon: Star, color: 'text-yellow-600 bg-yellow-50' },
   { id: 'scoresheets', label: 'Partituras (AlphaTab)', model: 'ScoreSheet', icon: FileMusic, color: 'text-emerald-600 bg-emerald-50' },
   { id: 'chorddefinitions', label: 'Diccionario Acordes', model: 'ChordDefinition', icon: Code, color: 'text-purple-600 bg-purple-50' },
@@ -233,6 +240,17 @@ function ArtistAutocompleteInput({
   );
 }
 
+function getSyncMeasureCount(syncData) {
+  if (!syncData) return null;
+  try {
+    const parsed = typeof syncData === 'string' ? JSON.parse(syncData) : syncData;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.length;
+    }
+  } catch {}
+  return null;
+}
+
 export default function DevDatabaseStudio({ onNavigateHome }) {
   const [activeTab, setActiveTab] = useState('songs');
   const [stats, setStats] = useState(null);
@@ -243,6 +261,7 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
   const [limit, setLimit] = useState(20);
   const [totalPages, setTotalPages] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
+  const [songFilter, setSongFilter] = useState('all');
   const [loadingTable, setLoadingTable] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -282,7 +301,7 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
   }, []);
 
   // Cargar registros de la tabla seleccionada
-  const fetchTableData = useCallback(async (tabId = activeTab, pageNum = page, search = searchTerm) => {
+  const fetchTableData = useCallback(async (tabId = activeTab, pageNum = page, search = searchTerm, filter = songFilter) => {
     if (tabId === 'query') return;
     setLoadingTable(true);
     try {
@@ -290,6 +309,9 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
       url.searchParams.set('page', pageNum);
       url.searchParams.set('limit', limit);
       if (search) url.searchParams.set('search', search);
+      if (tabId === 'songs' && filter && filter !== 'all') {
+        url.searchParams.set('filter', filter);
+      }
 
       const res = await fetch(url.toString());
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -303,7 +325,7 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
     } finally {
       setLoadingTable(false);
     }
-  }, [activeTab, page, limit, searchTerm]);
+  }, [activeTab, page, limit, searchTerm, songFilter]);
 
   useEffect(() => {
     fetchStats();
@@ -312,15 +334,22 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
   useEffect(() => {
     setPage(1);
     if (activeTab !== 'query') {
-      fetchTableData(activeTab, 1, searchTerm);
+      fetchTableData(activeTab, 1, searchTerm, songFilter);
     }
   }, [activeTab, fetchTableData]);
+
+  // Manejar cambio de filtro rápido para canciones
+  const handleFilterChange = (newFilter) => {
+    setSongFilter(newFilter);
+    setPage(1);
+    fetchTableData(activeTab, 1, searchTerm, newFilter);
+  };
 
   // Manejar búsqueda con Enter o botón
   const handleSearchSubmit = (e) => {
     e.preventDefault();
     setPage(1);
-    fetchTableData(activeTab, 1, searchTerm);
+    fetchTableData(activeTab, 1, searchTerm, songFilter);
   };
 
   // Guardar (crear o editar)
@@ -343,6 +372,14 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
       delete payload.setlistSongs;
       delete payload.song;
       delete payload.setlist;
+      delete payload.albumRel;
+      delete payload.scoreSheets;
+      delete payload.userPreferences;
+      delete payload.preferences;
+      delete payload.user;
+      delete payload.artist;
+      delete payload.albums;
+      delete payload._count;
       if (activeTab !== 'songs') {
         delete payload.artistNames;
         delete payload.artists;
@@ -458,14 +495,45 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
         title: '',
         artist: '',
         artistNames: [],
+        album: '',
+        albumCover: '',
+        releaseYear: new Date().getFullYear(),
+        versionType: 'studio',
+        versionDetails: '',
         content: '[BPM @ 120]\n[Beats @ 4]\n\n[Intro]\n[C] [G] [Am] [F]\n\n[Estrofa 1]\n[C]Primera [G]línea de la [Am]canción [F]',
         youtubeId: '',
         syncData: '[]',
         transpose: 0,
         isCustom: false,
       });
+    } else if (activeTab === 'albums') {
+      setEditingItem({
+        title: '',
+        cover: '',
+        releaseYear: new Date().getFullYear(),
+        versionType: 'studio',
+        versionDetails: '',
+        artistId: '',
+      });
     } else if (activeTab === 'artists') {
-      setEditingItem({ name: '', image: '' });
+      setEditingItem({ name: '', image: '', bio: '' });
+    } else if (activeTab === 'users') {
+      setEditingItem({
+        name: '',
+        email: '',
+        role: 'FREE',
+        avatar: '',
+      });
+    } else if (activeTab === 'userpreferences') {
+      setEditingItem({
+        userId: '',
+        songId: '',
+        transpose: 0,
+        chordVariants: '{}',
+        customContent: '',
+        isCustom: false,
+        isFavorite: false,
+      });
     } else if (activeTab === 'setlists') {
       setEditingItem({ name: 'Nuevo Repertorio' });
     } else if (activeTab === 'customchords') {
@@ -557,6 +625,11 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
               </div>
               <div className="w-px h-3 bg-stone-800" />
               <div>
+                <span className="text-stone-500">Álbumes: </span>
+                <span className="text-rose-300 font-bold">{stats.counts?.albums ?? 0}</span>
+              </div>
+              <div className="w-px h-3 bg-stone-800" />
+              <div>
                 <span className="text-stone-500">Artistas: </span>
                 <span className="text-teal-300 font-bold">{stats.counts?.artists ?? 0}</span>
               </div>
@@ -564,6 +637,11 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
               <div>
                 <span className="text-stone-500">Repertorios: </span>
                 <span className="text-stone-200 font-bold">{stats.counts?.setlists ?? 0}</span>
+              </div>
+              <div className="w-px h-3 bg-stone-800" />
+              <div>
+                <span className="text-stone-500">Usuarios: </span>
+                <span className="text-sky-300 font-bold">{stats.counts?.users ?? 0}</span>
               </div>
             </div>
           )}
@@ -653,6 +731,24 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
                     className="text-[11px] px-2.5 py-1 rounded-md bg-stone-900 hover:bg-stone-800 text-stone-300 border border-stone-800 hover:border-stone-700 transition cursor-pointer font-mono"
                   >
                     Últimas 15 Canciones
+                  </button>
+                  <button
+                    onClick={() => setSqlQuery('SELECT al.id, al.title, al.releaseYear, al.versionType, ar.name as artista, count(s.id) as canciones FROM Album al JOIN Artist ar ON al.artistId = ar.id LEFT JOIN Song s ON al.id = s.albumId GROUP BY al.id ORDER BY al.releaseYear DESC;')}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-stone-900 hover:bg-stone-800 text-stone-300 border border-stone-800 hover:border-stone-700 transition cursor-pointer font-mono"
+                  >
+                    Álbumes con Artista
+                  </button>
+                  <button
+                    onClick={() => setSqlQuery("SELECT id, title, artist, youtubeId, CASE WHEN syncData IS NOT NULL AND syncData != '' AND syncData != '[]' THEN 'Sincronizada (BeatGrid)' ELSE 'Solo Letra' END as estadoSync FROM Song ORDER BY updatedAt DESC;")}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-stone-900 hover:bg-stone-800 text-stone-300 border border-stone-800 hover:border-stone-700 transition cursor-pointer font-mono"
+                  >
+                    Canciones y Estado Sync
+                  </button>
+                  <button
+                    onClick={() => setSqlQuery('SELECT u.id, u.email, u.name, u.role, count(p.id) as totalPreferencias FROM User u LEFT JOIN UserSongPreference p ON u.id = p.userId GROUP BY u.id;')}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-stone-900 hover:bg-stone-800 text-stone-300 border border-stone-800 hover:border-stone-700 transition cursor-pointer font-mono"
+                  >
+                    Usuarios y Preferencias
                   </button>
                   <button
                     onClick={() => setSqlQuery('SELECT a.name as artista, count(s.id) as canciones FROM Artist a LEFT JOIN _ArtistToSong rel ON a.id = rel.A LEFT JOIN Song s ON rel.B = s.id GROUP BY a.id ORDER BY canciones DESC;')}
@@ -767,42 +863,79 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
           ) : (
             /* Table Records View */
             <div className="p-6 space-y-4 max-w-7xl mx-auto w-full">
-              {/* Controls bar: Search, Pagination, New Record */}
-              <div className="flex flex-wrap items-center justify-between gap-3 bg-stone-950 p-4 rounded-2xl border border-stone-800 shadow-md">
-                <form onSubmit={handleSearchSubmit} className="flex-1 min-w-[260px] max-w-md relative">
-                  <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder={`Buscar en ${activeTab}...`}
-                    className="w-full bg-stone-900 border border-stone-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
-                  />
-                </form>
+              {/* Controls bar: Search, Quick Filters, Pagination, New Record */}
+              <div className="space-y-3 bg-stone-950 p-4 rounded-2xl border border-stone-800 shadow-md">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <form onSubmit={handleSearchSubmit} className="flex-1 min-w-[260px] max-w-md relative">
+                    <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      placeholder={`Buscar en ${activeTab}...`}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                    />
+                  </form>
 
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={handleNewRecord}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs transition active:scale-95 shadow-md shadow-amber-500/10 cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Nuevo Registro</span>
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleNewRecord}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs transition active:scale-95 shadow-md shadow-amber-500/10 cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Nuevo Registro</span>
+                    </button>
 
-                  <select
-                    value={limit}
-                    onChange={(e) => {
-                      setLimit(Number(e.target.value));
-                      setPage(1);
-                    }}
-                    className="bg-stone-900 border border-stone-800 text-stone-300 text-xs rounded-xl px-2.5 py-2 focus:outline-none"
-                  >
-                    <option value={10}>10 filas</option>
-                    <option value={20}>20 filas</option>
-                    <option value={50}>50 filas</option>
-                    <option value={100}>100 filas</option>
-                  </select>
+                    <select
+                      value={limit}
+                      onChange={(e) => {
+                        setLimit(Number(e.target.value));
+                        setPage(1);
+                      }}
+                      className="bg-stone-900 border border-stone-800 text-stone-300 text-xs rounded-xl px-2.5 py-2 focus:outline-none cursor-pointer"
+                    >
+                      <option value={10}>10 filas</option>
+                      <option value={20}>20 filas</option>
+                      <option value={50}>50 filas</option>
+                      <option value={100}>100 filas</option>
+                    </select>
+                  </div>
                 </div>
+
+                {activeTab === 'songs' && (
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-stone-900">
+                    <span className="text-[10px] font-mono uppercase text-stone-500 flex items-center gap-1 mr-1">
+                      <Filter className="w-3 h-3 text-stone-400" />
+                      <span>Filtrar:</span>
+                    </span>
+                    {[
+                      { id: 'all', label: 'Todas' },
+                      { id: 'sync', label: 'BeatGrid OK (Sincronizadas)', dotColor: 'bg-emerald-400' },
+                      { id: 'lyrics', label: 'Solo Letra' },
+                      { id: 'youtube', label: 'Con YouTube', dotColor: 'bg-red-400' },
+                      { id: 'score', label: 'Con Partitura', dotColor: 'bg-cyan-400' },
+                    ].map((f) => {
+                      const isSelected = songFilter === f.id;
+                      return (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => handleFilterChange(f.id)}
+                          className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                            isSelected
+                              ? 'bg-amber-500 text-stone-950 shadow-sm'
+                              : 'bg-stone-900 hover:bg-stone-800 text-stone-300 border border-stone-800'
+                          }`}
+                        >
+                          {f.dotColor && (
+                            <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-stone-950' : f.dotColor}`} />
+                          )}
+                          <span>{f.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Records Table */}
@@ -826,11 +959,21 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
                           <th className="px-4 py-3">ID</th>
                           {activeTab === 'songs' && (
                             <>
-                              <th className="px-4 py-3">Título</th>
-                              <th className="px-4 py-3">Artistas (Múltiples)</th>
+                              <th className="px-4 py-3">Título y Edición</th>
+                              <th className="px-4 py-3">Artistas</th>
                               <th className="px-4 py-3">YouTube</th>
                               <th className="px-4 py-3">Sincronización</th>
+                              <th className="px-4 py-3">Partitura</th>
                               <th className="px-4 py-3">Tono</th>
+                            </>
+                          )}
+                          {activeTab === 'albums' && (
+                            <>
+                              <th className="px-4 py-3">Carátula y Álbum</th>
+                              <th className="px-4 py-3">Artista</th>
+                              <th className="px-4 py-3">Año</th>
+                              <th className="px-4 py-3">Versión</th>
+                              <th className="px-4 py-3">Canciones</th>
                             </>
                           )}
                           {activeTab === 'artists' && (
@@ -843,6 +986,23 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
                             <>
                               <th className="px-4 py-3">Nombre</th>
                               <th className="px-4 py-3">Canciones</th>
+                            </>
+                          )}
+                          {activeTab === 'users' && (
+                            <>
+                              <th className="px-4 py-3">Usuario</th>
+                              <th className="px-4 py-3">Email</th>
+                              <th className="px-4 py-3">Rol</th>
+                              <th className="px-4 py-3">Actividad</th>
+                            </>
+                          )}
+                          {activeTab === 'userpreferences' && (
+                            <>
+                              <th className="px-4 py-3">Usuario</th>
+                              <th className="px-4 py-3">Canción</th>
+                              <th className="px-4 py-3">Tono</th>
+                              <th className="px-4 py-3">Variantes Acordes</th>
+                              <th className="px-4 py-3">Estado</th>
                             </>
                           )}
                           {activeTab === 'favorites' && (
@@ -894,8 +1054,41 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
                             {/* Specific Columns */}
                             {activeTab === 'songs' && (
                               <>
-                                <td className="px-4 py-3 font-medium text-white max-w-xs truncate" title={item.title}>
-                                  {item.title}
+                                <td className="px-4 py-3 max-w-xs">
+                                  <div className="flex items-center gap-3">
+                                    {(item.albumRel?.cover || item.albumCover) ? (
+                                      <img
+                                        src={item.albumRel?.cover || item.albumCover}
+                                        alt={item.title}
+                                        className="w-9 h-9 rounded-lg object-cover border border-stone-800 shadow-sm flex-shrink-0"
+                                      />
+                                    ) : (
+                                      <div className="w-9 h-9 rounded-lg bg-stone-900 border border-stone-800 flex items-center justify-center text-stone-600 flex-shrink-0">
+                                        <Music className="w-4 h-4" />
+                                      </div>
+                                    )}
+                                    <div className="min-w-0">
+                                      <div className="font-semibold text-white truncate text-xs" title={item.title}>
+                                        {item.title}
+                                      </div>
+                                      {(item.albumRel?.title || item.album) && (
+                                        <div className="text-[11px] text-stone-400 truncate flex items-center gap-1.5 mt-0.5">
+                                          <Disc className="w-3 h-3 text-stone-500 flex-shrink-0" />
+                                          <span className="truncate">{item.albumRel?.title || item.album}</span>
+                                          {(item.releaseYear || item.albumRel?.releaseYear) && (
+                                            <span className="text-[10px] text-stone-500 font-mono">
+                                              ({item.releaseYear || item.albumRel?.releaseYear})
+                                            </span>
+                                          )}
+                                          {(item.versionType || item.albumRel?.versionType) && (
+                                            <span className="px-1.5 py-0.2 rounded text-[9px] uppercase font-mono font-bold bg-stone-800 text-stone-300 border border-stone-700">
+                                              {item.versionType || item.albumRel?.versionType}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
                                 </td>
                                 <td className="px-4 py-3">
                                   <div className="flex flex-wrap gap-1 max-w-xs">
@@ -929,7 +1122,12 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
                                   )}
                                 </td>
                                 <td className="px-4 py-3">
-                                  {item.syncData ? (
+                                  {getSyncMeasureCount(item.syncData) ? (
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-700 shadow-sm">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                      <span>BeatGrid ({getSyncMeasureCount(item.syncData)} C)</span>
+                                    </span>
+                                  ) : item.syncData && item.syncData !== '[]' && item.syncData !== '' ? (
                                     <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
                                       BeatGrid OK
                                     </span>
@@ -939,8 +1137,67 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
                                     </span>
                                   )}
                                 </td>
+                                <td className="px-4 py-3">
+                                  {item._count?.scoreSheets > 0 ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-800">
+                                      Tab ({item._count.scoreSheets})
+                                    </span>
+                                  ) : (
+                                    <span className="text-stone-600 text-xs">—</span>
+                                  )}
+                                </td>
                                 <td className="px-4 py-3 font-mono text-xs text-amber-300">
                                   {item.transpose !== undefined && item.transpose !== null ? (item.transpose >= 0 ? `+${item.transpose}` : item.transpose) : '0'}
+                                </td>
+                              </>
+                            )}
+
+                            {activeTab === 'albums' && (
+                              <>
+                                <td className="px-4 py-3 max-w-xs">
+                                  <div className="flex items-center gap-3">
+                                    {item.cover ? (
+                                      <img
+                                        src={item.cover}
+                                        alt={item.title}
+                                        className="w-10 h-10 rounded-lg object-cover border border-stone-800 shadow-md flex-shrink-0"
+                                      />
+                                    ) : (
+                                      <div className="w-10 h-10 rounded-lg bg-rose-950/40 border border-rose-800/40 flex items-center justify-center text-rose-400 flex-shrink-0">
+                                        <Disc className="w-5 h-5" />
+                                      </div>
+                                    )}
+                                    <div className="min-w-0">
+                                      <div className="font-bold text-white text-xs truncate" title={item.title}>{item.title}</div>
+                                      {item.versionDetails && (
+                                        <div className="text-[10px] text-stone-400 italic truncate">{item.versionDetails}</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-stone-300">
+                                  {item.artist?.name ? (
+                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-teal-950/70 border border-teal-800 text-teal-300">
+                                      {item.artist.name}
+                                    </span>
+                                  ) : (
+                                    <span className="text-stone-500">—</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 font-mono text-xs text-amber-300">
+                                  {item.releaseYear ? (
+                                    <span className="px-2 py-0.5 rounded-full bg-stone-900 border border-stone-800 text-stone-300 font-bold">
+                                      {item.releaseYear}
+                                    </span>
+                                  ) : '—'}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase font-bold bg-rose-950/70 text-rose-300 border border-rose-800">
+                                    {item.versionType || 'studio'}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 font-mono text-xs text-stone-300">
+                                  {item._count?.songs ?? item.songs?.length ?? 0} tema(s)
                                 </td>
                               </>
                             )}
@@ -977,6 +1234,88 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
                                 <td className="px-4 py-3 font-semibold text-white">{item.name}</td>
                                 <td className="px-4 py-3 text-stone-400 font-mono text-xs">
                                   {item.songs?.length ?? 0} tema(s)
+                                </td>
+                              </>
+                            )}
+
+                            {activeTab === 'users' && (
+                              <>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-2.5">
+                                    {item.avatar ? (
+                                      <img src={item.avatar} alt={item.name} className="w-8 h-8 rounded-full object-cover border border-stone-700" />
+                                    ) : (
+                                      <div className="w-8 h-8 rounded-full bg-stone-800 text-sky-400 font-bold flex items-center justify-center text-xs border border-stone-700">
+                                        {item.name ? item.name.charAt(0).toUpperCase() : 'U'}
+                                      </div>
+                                    )}
+                                    <span className="font-semibold text-white text-xs">{item.name}</span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 font-mono text-xs text-stone-300">{item.email}</td>
+                                <td className="px-4 py-3">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${
+                                      item.role === 'ADMIN'
+                                        ? 'bg-purple-950 text-purple-300 border-purple-800'
+                                        : item.role === 'PRO'
+                                        ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                                        : 'bg-stone-900 text-stone-400 border-stone-800'
+                                    }`}
+                                  >
+                                    {item.role || 'FREE'}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 font-mono text-xs text-stone-400 space-x-2">
+                                  <span title="Preferencias de canciones">⭐ {item._count?.preferences ?? 0} prefs</span>
+                                  <span title="Repertorios creados">📁 {item._count?.setlists ?? 0} sets</span>
+                                  <span title="Favoritos">❤️ {item._count?.favorites ?? 0} favs</span>
+                                </td>
+                              </>
+                            )}
+
+                            {activeTab === 'userpreferences' && (
+                              <>
+                                <td className="px-4 py-3 text-white font-medium">
+                                  {item.user ? (
+                                    <div>
+                                      <div className="font-semibold text-xs">{item.user.name}</div>
+                                      <div className="text-[10px] text-stone-500 font-mono">{item.user.email}</div>
+                                    </div>
+                                  ) : (
+                                    <span className="font-mono text-stone-500 text-xs">{item.userId}</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-stone-300">
+                                  {item.song ? (
+                                    <div>
+                                      <div className="font-semibold text-xs text-white">{item.song.title}</div>
+                                      <div className="text-[10px] text-stone-400">{item.song.artist}</div>
+                                    </div>
+                                  ) : (
+                                    <span className="font-mono text-stone-500 text-xs">{item.songId}</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 font-mono text-xs text-amber-300">
+                                  {item.transpose !== undefined && item.transpose !== null ? (item.transpose >= 0 ? `+${item.transpose}` : item.transpose) : '0'}
+                                </td>
+                                <td className="px-4 py-3 font-mono text-[11px] text-stone-400 max-w-xs truncate" title={item.chordVariants || ''}>
+                                  {item.chordVariants ? item.chordVariants : '—'}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-1.5">
+                                    {item.isFavorite && (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-yellow-950/80 text-yellow-300 border border-yellow-800 font-bold">
+                                        Favorito
+                                      </span>
+                                    )}
+                                    {item.isCustom && (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-sky-950/80 text-sky-300 border border-sky-800 font-bold">
+                                        Arreglo
+                                      </span>
+                                    )}
+                                    {!item.isFavorite && !item.isCustom && <span className="text-stone-600 text-xs">—</span>}
+                                  </div>
                                 </td>
                               </>
                             )}
@@ -1197,6 +1536,71 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
                     </div>
                   </div>
 
+                  {/* Album & Edition Metadata */}
+                  <div className="space-y-3 md:col-span-2 bg-stone-900/50 p-4 rounded-2xl border border-stone-800">
+                    <div className="flex items-center gap-2 text-xs font-bold text-stone-200">
+                      <Disc className="w-4 h-4 text-rose-400" />
+                      <span>Metadatos del Álbum y Edición Canónica</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-stone-400">Nombre del Álbum</label>
+                        <input
+                          type="text"
+                          value={editingItem.album || ''}
+                          onChange={(e) => setEditingItem({ ...editingItem, album: e.target.value })}
+                          placeholder="ej: Bicicleta, Canción Animal"
+                          className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-stone-400">Año de Lanzamiento</label>
+                        <input
+                          type="number"
+                          value={editingItem.releaseYear ?? ''}
+                          onChange={(e) => setEditingItem({ ...editingItem, releaseYear: e.target.value })}
+                          placeholder="ej: 1980"
+                          className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-stone-400">Tipo de Versión</label>
+                        <select
+                          value={editingItem.versionType || 'studio'}
+                          onChange={(e) => setEditingItem({ ...editingItem, versionType: e.target.value })}
+                          className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                        >
+                          <option value="studio">Estudio (Canónica)</option>
+                          <option value="live">En Vivo (Live)</option>
+                          <option value="acoustic">Acústico</option>
+                          <option value="soundtrack">Banda Sonora</option>
+                          <option value="session">Sesión</option>
+                          <option value="demo">Demo / Inédito</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1 md:col-span-2">
+                        <label className="text-xs font-semibold text-stone-400">URL de Carátula del Álbum</label>
+                        <input
+                          type="text"
+                          value={editingItem.albumCover || ''}
+                          onChange={(e) => setEditingItem({ ...editingItem, albumCover: e.target.value })}
+                          placeholder="https://..."
+                          className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-stone-400">Detalles de Versión</label>
+                        <input
+                          type="text"
+                          value={editingItem.versionDetails || ''}
+                          onChange={(e) => setEditingItem({ ...editingItem, versionDetails: e.target.value })}
+                          placeholder="ej: Remaster 2021"
+                          className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-stone-400">YouTube Video ID</label>
                     <input
@@ -1257,6 +1661,195 @@ export default function DevDatabaseStudio({ onNavigateHome }) {
                       onChange={(e) => setEditingItem({ ...editingItem, syncData: e.target.value })}
                       placeholder="[]"
                       className="w-full bg-stone-900 border border-stone-800 rounded-xl p-3 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+              ) : activeTab === 'albums' ? (
+                /* Album Form */
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-xs font-semibold text-stone-400">Título del Álbum</label>
+                    <input
+                      type="text"
+                      required
+                      value={editingItem.title || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, title: e.target.value })}
+                      placeholder="ej: Bicicleta"
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">ID del Artista Principal</label>
+                    <input
+                      type="text"
+                      required
+                      value={editingItem.artistId || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, artistId: e.target.value })}
+                      placeholder="ID del modelo Artist"
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">Año de Lanzamiento</label>
+                    <input
+                      type="number"
+                      value={editingItem.releaseYear ?? ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, releaseYear: e.target.value })}
+                      placeholder="ej: 1980"
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-xs font-semibold text-stone-400">URL de Carátula Oficial</label>
+                    <input
+                      type="text"
+                      value={editingItem.cover || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, cover: e.target.value })}
+                      placeholder="https://..."
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">Tipo de Versión</label>
+                    <select
+                      value={editingItem.versionType || 'studio'}
+                      onChange={(e) => setEditingItem({ ...editingItem, versionType: e.target.value })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="studio">Estudio (studio)</option>
+                      <option value="live">En Vivo (live)</option>
+                      <option value="acoustic">Acústico (acoustic)</option>
+                      <option value="soundtrack">Banda Sonora (soundtrack)</option>
+                      <option value="session">Sesión (session)</option>
+                      <option value="demo">Demo / Inédito (demo)</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">Detalles de Versión</label>
+                    <input
+                      type="text"
+                      value={editingItem.versionDetails || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, versionDetails: e.target.value })}
+                      placeholder="ej: Edición original 1980"
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+              ) : activeTab === 'users' ? (
+                /* User Form */
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">Nombre del Usuario</label>
+                    <input
+                      type="text"
+                      required
+                      value={editingItem.name || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">Correo Electrónico</label>
+                    <input
+                      type="email"
+                      required
+                      value={editingItem.email || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, email: e.target.value })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">Rol del Usuario</label>
+                    <select
+                      value={editingItem.role || 'FREE'}
+                      onChange={(e) => setEditingItem({ ...editingItem, role: e.target.value })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="FREE">FREE</option>
+                      <option value="PRO">PRO</option>
+                      <option value="ADMIN">ADMIN</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">URL del Avatar</label>
+                    <input
+                      type="text"
+                      value={editingItem.avatar || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, avatar: e.target.value })}
+                      placeholder="https://..."
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+              ) : activeTab === 'userpreferences' ? (
+                /* UserSongPreference Form */
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">User ID</label>
+                    <input
+                      type="text"
+                      required
+                      value={editingItem.userId || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, userId: e.target.value })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">Song ID</label>
+                    <input
+                      type="text"
+                      required
+                      value={editingItem.songId || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, songId: e.target.value })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-stone-400">Tono Personal Transposición</label>
+                    <input
+                      type="number"
+                      value={editingItem.transpose ?? 0}
+                      onChange={(e) => setEditingItem({ ...editingItem, transpose: parseInt(e.target.value, 10) || 0 })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5 flex items-center gap-6 pt-5">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs text-stone-300">
+                      <input
+                        type="checkbox"
+                        checked={!!editingItem.isFavorite}
+                        onChange={(e) => setEditingItem({ ...editingItem, isFavorite: e.target.checked })}
+                        className="rounded bg-stone-900 border-stone-800 text-amber-500 focus:ring-0"
+                      />
+                      <span>Marcar como Favorito</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-xs text-stone-300">
+                      <input
+                        type="checkbox"
+                        checked={!!editingItem.isCustom}
+                        onChange={(e) => setEditingItem({ ...editingItem, isCustom: e.target.checked })}
+                        className="rounded bg-stone-900 border-stone-800 text-sky-500 focus:ring-0"
+                      />
+                      <span>Versión Personalizada</span>
+                    </label>
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-xs font-semibold text-stone-400">Variantes de Acordes JSON (ej: {"{\"C\": 1}"})</label>
+                    <input
+                      type="text"
+                      value={editingItem.chordVariants || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, chordVariants: e.target.value })}
+                      placeholder='{"C": 1, "G": 0}'
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-xs font-semibold text-stone-400">Arreglo o Letra Personalizada (Opcional)</label>
+                    <textarea
+                      rows={6}
+                      value={editingItem.customContent || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, customContent: e.target.value })}
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl p-3 font-mono text-xs text-stone-200 focus:outline-none focus:border-amber-500 leading-relaxed"
                     />
                   </div>
                 </div>

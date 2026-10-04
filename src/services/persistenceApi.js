@@ -40,7 +40,7 @@ export async function saveSong(songData) {
 /**
  * Saves a customized / arranged version of a song (isCustom: true)
  */
-export async function saveCustomSongVersion({ id, title, artist, content, syncData, originalContent }) {
+export async function saveCustomSongVersion({ id, title, artist, content, syncData, originalContent, isInstrumental, user, userId }) {
   try {
     const res = await fetch(`${BASE_URL}/songs`, {
       method: 'POST',
@@ -53,11 +53,19 @@ export async function saveCustomSongVersion({ id, title, artist, content, syncDa
         syncData,
         originalContent,
         isCustom: true,
+        ...(isInstrumental !== undefined ? { isInstrumental: Boolean(isInstrumental) } : {}),
+        user,
+        userId,
       }),
     });
     if (res.ok) return await res.json();
+    if (res.status === 403) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Solo los administradores pueden editar canciones.');
+    }
   } catch (err) {
     console.warn('[Persistence API] Failed to save custom song version:', err.message);
+    throw err;
   }
   return null;
 }
@@ -65,16 +73,21 @@ export async function saveCustomSongVersion({ id, title, artist, content, syncDa
 /**
  * Restores a song to its original unedited content
  */
-export async function restoreOriginalSong({ id, title, artist }) {
+export async function restoreOriginalSong({ id, title, artist, user, userId }) {
   try {
     const res = await fetch(`${BASE_URL}/songs/restore-original`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, title, artist }),
+      body: JSON.stringify({ id, title, artist, user, userId }),
     });
     if (res.ok) return await res.json();
+    if (res.status === 403) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Solo los administradores pueden restaurar canciones.');
+    }
   } catch (err) {
     console.warn('[Persistence API] Failed to restore original song:', err.message);
+    throw err;
   }
   return null;
 }

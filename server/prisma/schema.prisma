@@ -93,6 +93,7 @@ model Song {
   syncData        String?       // JSON con compases y timestamps rítmicos
   originalContent String?       // Letra original antes de arreglos
   isCustom        Boolean       @default(false)
+  isInstrumental  Boolean       @default(false)
   transpose       Int?          @default(0) // Fallback global/original
   chordVariants   String?       // Fallback global
 

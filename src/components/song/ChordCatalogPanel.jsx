@@ -53,6 +53,8 @@ export default function ChordCatalogPanel({
   onSetTimestamp = null,
   onAddMeasure = null,
   onUpdateChord = null,
+  currentBpm = 100,
+  onScaleBpm = null,
   className = '',
 }) {
   return (
@@ -116,6 +118,31 @@ export default function ChordCatalogPanel({
                   <Grid className="w-3.5 h-3.5" />
                 </button>
               </div>
+
+              {/* BPM Scaling Controls in Edit Mode */}
+              {isEditMode && onScaleBpm && (
+                <div className="flex items-center bg-stone-100 rounded-lg p-0.5 border border-stone-200 text-xs font-mono shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => onScaleBpm(0.5)}
+                    className="px-1.5 py-0.5 hover:bg-stone-200 text-stone-700 font-bold rounded transition-colors cursor-pointer"
+                    title="Dividir BPM a la mitad (÷2) y fusionar compases"
+                  >
+                    ÷2
+                  </button>
+                  <span className="px-1.5 py-0.5 text-[11px] font-bold text-amber-950 font-sans border-x border-stone-200">
+                    {currentBpm || 100} BPM
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onScaleBpm(2)}
+                    className="px-1.5 py-0.5 hover:bg-stone-200 text-stone-700 font-bold rounded transition-colors cursor-pointer"
+                    title="Duplicar BPM (x2) y subdividir compases"
+                  >
+                    x2
+                  </button>
+                </div>
+              )}
 
               {/* Metronome / Pulse Tracker Button */}
               <button

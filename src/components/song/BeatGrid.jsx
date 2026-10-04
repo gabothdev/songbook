@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { Disc3, Plus, Music2 } from 'lucide-react';
 
 /**
@@ -25,6 +25,14 @@ export default function BeatGrid({
   const ribbonScrollRef = useRef(null);
   const [activeDropCellIdx, setActiveDropCellIdx] = useState(null);
 
+  // Scrubber drag state & refs for fixed center needle
+  const isDraggingMarkerRef = useRef(false);
+  const dragStartXRef = useRef(0);
+  const dragStartScrollRef = useRef(0);
+  const lastScrubbedBeatRef = useRef(null);
+  const [isDraggingMarker, setIsDraggingMarker] = useState(false);
+  const [scrubbingBeatIndex, setScrubbingBeatIndex] = useState(null);
+
   const flatChords = useMemo(() => {
     return compases.flatMap((m) => m.acordes);
   }, [compases]);
@@ -39,8 +47,134 @@ export default function BeatGrid({
     });
   }, [compases, beatsPerMeasure]);
 
+  // Find beat currently under the stationary center needle
+  const findBeatUnderNeedle = useCallback(() => {
+    if (!ribbonScrollRef.current) return null;
+    const container = ribbonScrollRef.current;
+    const containerRect = container.getBoundingClientRect();
+    const needleX = containerRect.left + containerRect.width / 2;
+    const needleY = containerRect.top + containerRect.height / 2;
+
+    if (typeof document.elementsFromPoint === 'function') {
+      const elements = document.elementsFromPoint(needleX, needleY);
+      for (const el of elements) {
+        const beatEl = el.closest('[data-beat-index]');
+        if (beatEl && container.contains(beatEl)) {
+          const beatIdx = parseInt(beatEl.getAttribute('data-beat-index'), 10);
+          const chord = beatEl.getAttribute('data-chord') || '';
+          return { beatIdx, chord };
+        }
+      }
+    }
+
+    const beatEls = container.querySelectorAll('[data-beat-index]');
+    let closest = null;
+    let minDistance = Infinity;
+
+    beatEls.forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      const cellCenter = rect.left + rect.width / 2;
+      const dist = Math.abs(cellCenter - needleX);
+      if (dist < minDistance) {
+        minDistance = dist;
+        closest = {
+          beatIdx: parseInt(el.getAttribute('data-beat-index'), 10),
+          chord: el.getAttribute('data-chord') || '',
+        };
+      }
+    });
+
+    return closest;
+  }, []);
+
+  const rafIdRef = useRef(null);
+
+  const handleMarkerPointerDown = useCallback((e) => {
+    if (!ribbonScrollRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    isDraggingMarkerRef.current = true;
+    dragStartXRef.current = e.clientX;
+    dragStartScrollRef.current = ribbonScrollRef.current.scrollLeft;
+    lastScrubbedBeatRef.current = currentBeatIndex;
+
+    // Disable CSS smooth scrolling for instant 1:1 hardware drag
+    ribbonScrollRef.current.style.scrollBehavior = 'auto';
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (err) {}
+
+    setIsDraggingMarker(true);
+    setScrubbingBeatIndex(currentBeatIndex);
+  }, [currentBeatIndex]);
+
+  const handleMarkerPointerMove = useCallback((e) => {
+    if (!isDraggingMarkerRef.current || !ribbonScrollRef.current) return;
+    e.preventDefault();
+
+    const clientX = e.clientX;
+    if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+
+    rafIdRef.current = requestAnimationFrame(() => {
+      if (!ribbonScrollRef.current || !isDraggingMarkerRef.current) return;
+      const deltaX = clientX - dragStartXRef.current;
+      const maxScroll = ribbonScrollRef.current.scrollWidth - ribbonScrollRef.current.clientWidth;
+      const newScrollLeft = Math.max(0, Math.min(maxScroll, dragStartScrollRef.current + deltaX));
+
+      ribbonScrollRef.current.scrollLeft = newScrollLeft;
+
+      // Find beat under needle to update real-time visual highlight
+      const beatInfo = findBeatUnderNeedle();
+      if (beatInfo && beatInfo.beatIdx !== lastScrubbedBeatRef.current) {
+        lastScrubbedBeatRef.current = beatInfo.beatIdx;
+        setScrubbingBeatIndex(beatInfo.beatIdx);
+      }
+    });
+  }, [findBeatUnderNeedle]);
+
+  const handleMarkerPointerUp = useCallback((e) => {
+    if (!isDraggingMarkerRef.current) return;
+    isDraggingMarkerRef.current = false;
+    setIsDraggingMarker(false);
+
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch (err) {}
+
+    // Restore smooth scrolling behavior
+    if (ribbonScrollRef.current) {
+      ribbonScrollRef.current.style.scrollBehavior = '';
+    }
+
+    const beatInfo = findBeatUnderNeedle();
+    if (beatInfo) {
+      const measure = compases.find((_, mIdx) => {
+        const start = measureBeatOffsets[mIdx] ?? mIdx * beatsPerMeasure;
+        const len = compases[mIdx]?.acordes?.length || beatsPerMeasure;
+        return beatInfo.beatIdx >= start && beatInfo.beatIdx < start + len;
+      });
+
+      // Sound the chord on release and seek playback once
+      if (onBeatClick) {
+        onBeatClick(beatInfo.chord, beatInfo.beatIdx, measure, true);
+      }
+    }
+
+    setScrubbingBeatIndex(null);
+  }, [compases, measureBeatOffsets, beatsPerMeasure, onBeatClick, findBeatUnderNeedle]);
+
   // Auto-scroll the horizontal ribbon to keep the active beat centered using localized scroll
   useEffect(() => {
+    if (isDraggingMarkerRef.current) return;
     if (mode === 'ribbon' && activeCellRef.current && ribbonScrollRef.current) {
       const container = ribbonScrollRef.current;
       const cell = activeCellRef.current;
@@ -129,7 +263,9 @@ export default function BeatGrid({
    * Renders a single beat cell (time 1, 2, 3, or 4)
    */
   const renderBeatCell = (chord, beatNum, cellGlobalIndex, isRibbon = false, measure = null) => {
-    const isActive = cellGlobalIndex === currentBeatIndex;
+    const activeIndex =
+      isDraggingMarker && scrubbingBeatIndex !== null ? scrubbingBeatIndex : currentBeatIndex;
+    const isActive = cellGlobalIndex === activeIndex;
     const isRest = chord === '𝄾' || chord === '𝄽' || !chord;
     const isSynced = measure?.secTime !== null && measure?.secTime !== undefined;
 
@@ -199,6 +335,8 @@ export default function BeatGrid({
       <div
         key={cellGlobalIndex}
         ref={isActive ? activeCellRef : null}
+        data-beat-index={cellGlobalIndex}
+        data-chord={chord || ''}
         draggable={isDraggable}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
@@ -361,10 +499,50 @@ export default function BeatGrid({
       <div className="space-y-2 w-full">
         {/* Ribbon Horizontal Track */}
         <div className="relative w-full overflow-hidden rounded-2xl bg-[#1a120c] p-2.5 sm:p-3 border-2 border-amber-950/60 shadow-2xl">
-          {/* Fixed Center Playhead Needle Indicator */}
-          <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-amber-400 z-30 pointer-events-none shadow-[0_0_8px_rgba(251,191,36,0.8)]">
-            <div className="absolute -top-1 -left-1.5 w-3.5 h-3.5 bg-amber-400 rotate-45 rounded-xs shadow-md" />
-            <div className="absolute -bottom-1 -left-1.5 w-3.5 h-3.5 bg-amber-400 rotate-45 rounded-xs shadow-md" />
+          {/* Fixed Center Playhead Needle Indicator with Interactive Drag Scrubber */}
+          <div
+            onPointerDown={handleMarkerPointerDown}
+            onPointerMove={handleMarkerPointerMove}
+            onPointerUp={handleMarkerPointerUp}
+            onPointerCancel={handleMarkerPointerUp}
+            className={`
+              absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-12 z-30
+              flex flex-col items-center justify-between
+              cursor-ew-resize select-none touch-none group
+              ${isDraggingMarker ? 'cursor-grabbing' : ''}
+            `}
+            title="Arrastra para avanzar o retroceder compases"
+            aria-label="Marcador rítmico: arrastra para avanzar o retroceder"
+          >
+            {/* Top Diamond Handle */}
+            <div
+              className={`
+                w-4 h-4 -mt-1 bg-amber-400 rotate-45 rounded-xs shadow-md
+                transition-transform duration-150
+                group-hover:scale-125 group-hover:bg-amber-300 group-hover:shadow-[0_0_10px_rgba(251,191,36,1)]
+                ${isDraggingMarker ? 'scale-125 bg-amber-300 shadow-[0_0_12px_rgba(251,191,36,1)]' : ''}
+              `}
+            />
+
+            {/* Vertical Golden Needle Line */}
+            <div
+              className={`
+                w-0.5 flex-1 bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]
+                transition-all duration-150
+                group-hover:w-1 group-hover:bg-amber-300 group-hover:shadow-[0_0_12px_rgba(251,191,36,1)]
+                ${isDraggingMarker ? 'w-1 bg-amber-300 shadow-[0_0_14px_rgba(251,191,36,1)]' : ''}
+              `}
+            />
+
+            {/* Bottom Diamond Handle */}
+            <div
+              className={`
+                w-4 h-4 -mb-1 bg-amber-400 rotate-45 rounded-xs shadow-md
+                transition-transform duration-150
+                group-hover:scale-125 group-hover:bg-amber-300 group-hover:shadow-[0_0_10px_rgba(251,191,36,1)]
+                ${isDraggingMarker ? 'scale-125 bg-amber-300 shadow-[0_0_12px_rgba(251,191,36,1)]' : ''}
+              `}
+            />
           </div>
 
           {/* Left / Right Ambient Vignettes */}
@@ -374,7 +552,9 @@ export default function BeatGrid({
           {/* Scrollable Ribbon Track */}
           <div
             ref={ribbonScrollRef}
-            className="flex items-center gap-3 overflow-x-auto py-2 px-[50%] scrollbar-none scroll-smooth"
+            className={`flex items-center gap-3 overflow-x-auto py-2 px-[50%] scrollbar-none ${
+              isDraggingMarker ? 'scroll-auto' : 'scroll-smooth'
+            }`}
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           >
             {sectionGroups.map((group, gIdx) => {

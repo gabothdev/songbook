@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as Tone from 'tone';
-import { Youtube, X, Minimize2, Maximize2, Move, Search, Link as LinkIcon, Sparkles } from 'lucide-react';
+import { Youtube, Minimize2, Move, Search, Link as LinkIcon, Sparkles } from 'lucide-react';
 
 /**
  * Floating / Pinned Paper Scrap containing the synchronized YouTube Player.
@@ -19,7 +19,6 @@ export default function FloatingVideoPaper({
   onPlayerReady,
   onOpenVideoPicker = null,
 }) {
-  const [isMinimized, setIsMinimized] = useState(false);
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const intervalRef = useRef(null);
@@ -50,11 +49,10 @@ export default function FloatingVideoPaper({
     }
   }, []);
 
-  // Initialize or re-create YouTube Player only when youtubeId or visibility changes
-  // NOTE: isMinimized is intentionally NOT a dependency — we never destroy the player on minimize.
-  // The player container is kept in the DOM and hidden via CSS when minimized.
+  // Initialize or re-create YouTube Player only when youtubeId changes.
+  // Visibility (minimize/expand) does NOT destroy the player so playback continues seamlessly in the background.
   useEffect(() => {
-    if (!youtubeId || !isVisible) return;
+    if (!youtubeId) return;
 
     let destroyed = false;
 
@@ -139,9 +137,7 @@ export default function FloatingVideoPaper({
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [youtubeId, isVisible]);
-
-  if (!isVisible) return null;
+  }, [youtubeId]);
 
   return (
     <>
@@ -149,13 +145,17 @@ export default function FloatingVideoPaper({
       <div ref={dragConstraintsRef} className="fixed inset-0 pointer-events-none z-40" />
 
       <motion.div
-        drag
+        drag={isVisible}
         dragMomentum={false}
         dragElastic={0.08}
         dragConstraints={dragConstraintsRef}
         initial={{ opacity: 0, scale: 0.9, y: 30, rotate: 2 }}
-        animate={{ opacity: 1, scale: 1, y: 0, rotate: isMinimized ? 0 : 1.5 }}
-        exit={{ opacity: 0, scale: 0.85, y: 20 }}
+        animate={
+          isVisible
+            ? { opacity: 1, scale: 1, y: 0, rotate: 1.5, pointerEvents: 'auto' }
+            : { opacity: 0, scale: 0.85, y: 35, rotate: 0, pointerEvents: 'none' }
+        }
+        transition={{ type: 'spring', stiffness: 350, damping: 28 }}
         whileDrag={{ scale: 1.03, cursor: 'grabbing', zIndex: 60 }}
         onPointerDown={() => {
           try {
@@ -164,8 +164,13 @@ export default function FloatingVideoPaper({
             }
           } catch (e) {}
         }}
-        className="fixed bottom-5 right-5 sm:bottom-8 sm:right-8 z-50 select-none cursor-grab"
-        style={{ touchAction: 'none' }}
+        className={`fixed bottom-5 right-5 sm:bottom-8 sm:right-8 z-50 select-none cursor-grab ${
+          !isVisible ? 'pointer-events-none' : ''
+        }`}
+        style={{
+          touchAction: 'none',
+          visibility: isVisible ? 'visible' : 'hidden',
+        }}
       >
       {/* Paper Container */}
       <div className="relative w-[320px] sm:w-[380px] md:w-[420px] filter drop-shadow-[0_20px_30px_rgba(0,0,0,0.45)]">
@@ -202,20 +207,6 @@ export default function FloatingVideoPaper({
                 </button>
               )}
 
-              {youtubeId && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsMinimized(!isMinimized);
-                  }}
-                  className="p-1 rounded-md hover:bg-stone-200/80 text-stone-600 transition-colors cursor-pointer"
-                  title={isMinimized ? 'Expandir video' : 'Minimizar'}
-                >
-                  {isMinimized ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
-                </button>
-              )}
-
               {onClose && (
                 <button
                   type="button"
@@ -224,9 +215,9 @@ export default function FloatingVideoPaper({
                     onClose();
                   }}
                   className="p-1 rounded-md hover:bg-stone-200/80 text-stone-600 transition-colors cursor-pointer"
-                  title="Cerrar reproductor"
+                  title="Minimizar a la solapa"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <Minimize2 className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
@@ -234,25 +225,9 @@ export default function FloatingVideoPaper({
 
           {/* Video or Link Prompt container element */}
           {youtubeId ? (
-            <>
-              {/* Player always stays in the DOM to avoid destroying/recreating the iframe.
-                  When minimized, it's hidden with CSS and a compact badge is shown. */}
-              <div
-                className="w-full aspect-video rounded-xl overflow-hidden shadow-md bg-black border border-stone-300 relative z-10"
-                style={{ display: isMinimized ? 'none' : 'block' }}
-              >
-                <div id={playerIdRef.current} className="w-full h-full" />
-              </div>
-
-              {isMinimized && (
-                <div className="py-3 px-3 bg-white/90 rounded-xl border border-stone-300 flex items-center justify-between text-xs font-sans text-stone-700 shadow-sm">
-                  <span className="truncate font-medium">{songArtist}</span>
-                  <span className="text-[10px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded">
-                    Video en segundo plano
-                  </span>
-                </div>
-              )}
-            </>
+            <div className="w-full aspect-video rounded-xl overflow-hidden shadow-md bg-black border border-stone-300 relative z-10">
+              <div id={playerIdRef.current} className="w-full h-full" />
+            </div>
           ) : (
             <div className="w-full aspect-video rounded-xl bg-amber-50/70 border-2 border-dashed border-amber-400/80 flex flex-col items-center justify-center p-4 text-center space-y-2 relative z-10 shadow-inner">
               <Sparkles className="w-6 h-6 text-amber-600 animate-pulse" />

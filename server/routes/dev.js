@@ -27,6 +27,13 @@ const MODEL_MAPPING = {
   scoresheet: 'scoreSheet',
   artists: 'artist',
   artist: 'artist',
+  albums: 'album',
+  album: 'album',
+  users: 'user',
+  user: 'user',
+  userpreferences: 'userSongPreference',
+  usersongpreferences: 'userSongPreference',
+  usersongpreference: 'userSongPreference',
 };
 
 function getModelDelegate(tableName) {
@@ -53,6 +60,9 @@ router.get('/stats', async (req, res) => {
     const [
       songCount,
       artistCount,
+      albumCount,
+      userCount,
+      userSongPrefCount,
       favoriteCount,
       setlistCount,
       setlistSongCount,
@@ -62,6 +72,9 @@ router.get('/stats', async (req, res) => {
     ] = await Promise.all([
       prisma.song.count(),
       prisma.artist.count(),
+      prisma.album.count(),
+      prisma.user.count(),
+      prisma.userSongPreference.count(),
       prisma.favorite.count(),
       prisma.setlist.count(),
       prisma.setlistSong.count(),
@@ -81,12 +94,15 @@ router.get('/stats', async (req, res) => {
       counts: {
         songs: songCount,
         artists: artistCount,
+        albums: albumCount,
+        users: userCount,
+        userpreferences: userSongPrefCount,
         favorites: favoriteCount,
         setlists: setlistCount,
-        setlistSongs: setlistSongCount,
-        customChords: customChordCount,
-        chordDefinitions: chordDefCount,
-        scoreSheets: scoreSheetCount,
+        setlistsongs: setlistSongCount,
+        customchords: customChordCount,
+        chorddefinitions: chordDefCount,
+        scoresheets: scoreSheetCount,
       },
       server: {
         uptime: process.uptime(),
@@ -137,6 +153,34 @@ router.get('/artists/suggest', async (req, res) => {
   }
 });
 
+// 1c. Autocompletado y sugerencias de álbumes
+router.get('/albums/suggest', async (req, res) => {
+  const query = (req.query.q || '').trim();
+  try {
+    const albums = await prisma.album.findMany({
+      where: query
+        ? {
+            title: {
+              contains: query,
+            },
+          }
+        : undefined,
+      take: 20,
+      orderBy: { title: 'asc' },
+      include: {
+        artist: {
+          select: { id: true, name: true, image: true },
+        },
+      },
+    });
+
+    res.json(albums);
+  } catch (error) {
+    console.error('[Dev API] Error en /albums/suggest:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // 2. Obtener registros de una tabla con búsqueda y paginación
 router.get('/tables/:table', async (req, res) => {
   const { table } = req.params;
@@ -150,6 +194,7 @@ router.get('/tables/:table', async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const skip = (page - 1) * limit;
   const search = (req.query.search || '').trim();
+  const filter = (req.query.filter || 'all').trim();
   const sortField = req.query.sortField || 'createdAt';
   const sortDir = (req.query.sortDir || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
 
@@ -157,19 +202,84 @@ router.get('/tables/:table', async (req, res) => {
     let where = {};
 
     // Filtros de búsqueda específicos por modelo
-    if (search) {
-      if (modelName === 'song') {
-        where = {
+    if (modelName === 'song') {
+      const conditions = [];
+      if (search) {
+        conditions.push({
           OR: [
             { title: { contains: search } },
             { artist: { contains: search } },
+            { album: { contains: search } },
             { youtubeId: { contains: search } },
             { content: { contains: search } },
             { artists: { some: { name: { contains: search } } } },
           ],
-        };
-      } else if (modelName === 'artist') {
+        });
+      }
+
+      if (filter === 'sync') {
+        conditions.push({
+          AND: [
+            { syncData: { not: null } },
+            { syncData: { not: '' } },
+            { syncData: { not: '[]' } },
+          ],
+        });
+      } else if (filter === 'lyrics') {
+        conditions.push({
+          OR: [
+            { syncData: null },
+            { syncData: '' },
+            { syncData: '[]' },
+          ],
+        });
+      } else if (filter === 'youtube') {
+        conditions.push({
+          AND: [
+            { youtubeId: { not: null } },
+            { youtubeId: { not: '' } },
+          ],
+        });
+      } else if (filter === 'score') {
+        conditions.push({
+          scoreSheets: { some: {} },
+        });
+      }
+
+      if (conditions.length === 1) {
+        where = conditions[0];
+      } else if (conditions.length > 1) {
+        where = { AND: conditions };
+      }
+    } else if (search) {
+      if (modelName === 'artist') {
         where = { name: { contains: search } };
+      } else if (modelName === 'album') {
+        where = {
+          OR: [
+            { title: { contains: search } },
+            { versionType: { contains: search } },
+            { versionDetails: { contains: search } },
+            { artist: { name: { contains: search } } },
+          ],
+        };
+      } else if (modelName === 'user') {
+        where = {
+          OR: [
+            { name: { contains: search } },
+            { email: { contains: search } },
+            { role: { contains: search } },
+          ],
+        };
+      } else if (modelName === 'userSongPreference') {
+        where = {
+          OR: [
+            { user: { name: { contains: search } } },
+            { user: { email: { contains: search } } },
+            { song: { title: { contains: search } } },
+            { song: { artist: { contains: search } } },
+          ],
+        };
       } else if (modelName === 'setlist') {
         where = { name: { contains: search } };
       } else if (modelName === 'chordDefinition') {
@@ -203,12 +313,35 @@ router.get('/tables/:table', async (req, res) => {
     if (modelName === 'song') {
       include = {
         artists: true,
+        albumRel: { select: { id: true, title: true, cover: true, releaseYear: true, versionType: true } },
+        _count: {
+          select: { scoreSheets: true, userPreferences: true },
+        },
+      };
+    } else if (modelName === 'album') {
+      include = {
+        artist: { select: { id: true, name: true, image: true } },
+        _count: { select: { songs: true } },
       };
     } else if (modelName === 'artist') {
       include = {
         songs: {
           select: { id: true, title: true, artist: true, youtubeId: true },
         },
+        _count: {
+          select: { albums: true, songs: true },
+        },
+      };
+    } else if (modelName === 'user') {
+      include = {
+        _count: {
+          select: { preferences: true, setlists: true, favorites: true },
+        },
+      };
+    } else if (modelName === 'userSongPreference') {
+      include = {
+        user: { select: { id: true, name: true, email: true, role: true } },
+        song: { select: { id: true, title: true, artist: true, youtubeId: true } },
       };
     } else if (modelName === 'setlist') {
       include = {
@@ -232,11 +365,15 @@ router.get('/tables/:table', async (req, res) => {
         song: { select: { id: true, title: true, artist: true } },
         setlist: { select: { id: true, name: true } },
       };
+    } else if (modelName === 'scoreSheet') {
+      include = {
+        song: { select: { id: true, title: true, artist: true } },
+      };
     }
 
     // Validar ordenamiento
     let orderBy = {};
-    if (['createdAt', 'updatedAt', 'title', 'artist', 'name', 'chordName', 'order'].includes(sortField)) {
+    if (['createdAt', 'updatedAt', 'title', 'artist', 'name', 'chordName', 'order', 'releaseYear'].includes(sortField)) {
       orderBy[sortField] = sortDir;
     } else {
       orderBy = { createdAt: 'desc' };
@@ -295,6 +432,32 @@ router.get('/tables/:table/:id', async (req, res) => {
               songs: {
                 select: { id: true, title: true, artist: true, youtubeId: true },
               },
+              albums: true,
+            },
+          }
+        : {}),
+      ...(lookup.modelName === 'album'
+        ? {
+            include: {
+              artist: true,
+              songs: { select: { id: true, title: true, artist: true, youtubeId: true } },
+            },
+          }
+        : {}),
+      ...(lookup.modelName === 'user'
+        ? {
+            include: {
+              preferences: { include: { song: { select: { id: true, title: true } } } },
+              setlists: true,
+              favorites: { include: { song: { select: { id: true, title: true } } } },
+            },
+          }
+        : {}),
+      ...(lookup.modelName === 'userSongPreference'
+        ? {
+            include: {
+              user: true,
+              song: true,
             },
           }
         : {}),
@@ -302,8 +465,10 @@ router.get('/tables/:table/:id', async (req, res) => {
         ? {
             include: {
               artists: true,
+              albumRel: true,
               favorites: true,
               setlistSongs: { include: { setlist: true } },
+              scoreSheets: true,
             },
           }
         : {}),
@@ -354,22 +519,58 @@ function sanitizeIncomingData(modelName, data) {
   delete data.id;
   delete data.createdAt;
   delete data.updatedAt;
+  delete data._count;
 
   if (modelName === 'artist') {
     delete data.songs;
+    delete data.albums;
     delete data.artistNames;
+  } else if (modelName === 'album') {
+    delete data.artist;
+    delete data.songs;
+  } else if (modelName === 'user') {
+    delete data.preferences;
+    delete data.setlists;
+    delete data.favorites;
+  } else if (modelName === 'userSongPreference') {
+    delete data.user;
+    delete data.song;
   } else if (modelName === 'song') {
     delete data.favorites;
     delete data.setlistSongs;
+    delete data.albumRel;
+    delete data.scoreSheets;
+    delete data.userPreferences;
   } else if (modelName === 'setlist') {
     delete data.songs;
     delete data.setlistSongs;
+    delete data.user;
   } else if (modelName === 'favorite') {
     delete data.song;
+    delete data.user;
   } else if (modelName === 'setlistSong') {
     delete data.song;
     delete data.setlist;
+  } else if (modelName === 'scoreSheet') {
+    delete data.song;
   }
+
+  // Sanitizar tipos numéricos y claves foráneas
+  if ('releaseYear' in data) {
+    data.releaseYear = data.releaseYear !== '' && data.releaseYear !== null && !isNaN(Number(data.releaseYear))
+      ? parseInt(data.releaseYear, 10)
+      : null;
+  }
+  if ('transpose' in data) {
+    data.transpose = data.transpose !== '' && data.transpose !== null && !isNaN(Number(data.transpose))
+      ? parseInt(data.transpose, 10)
+      : 0;
+  }
+  if ('albumId' in data && !data.albumId) data.albumId = null;
+  if ('userId' in data && !data.userId) data.userId = null;
+  if ('songId' in data && !data.songId) data.songId = null;
+  if ('isCustom' in data) data.isCustom = Boolean(data.isCustom);
+  if ('isFavorite' in data) data.isFavorite = Boolean(data.isFavorite);
 
   // Limpiar cualquier propiedad que sea un array de objetos para evitar error de Prisma
   for (const key of Object.keys(data)) {
@@ -414,8 +615,10 @@ router.post('/tables/:table', async (req, res) => {
 
     const created = await lookup.delegate.create({
       data,
-      ...(lookup.modelName === 'song' ? { include: { artists: true } } : {}),
+      ...(lookup.modelName === 'song' ? { include: { artists: true, albumRel: true } } : {}),
       ...(lookup.modelName === 'artist' ? { include: { songs: { select: { id: true, title: true } } } } : {}),
+      ...(lookup.modelName === 'album' ? { include: { artist: true } } : {}),
+      ...(lookup.modelName === 'userSongPreference' ? { include: { user: true, song: true } } : {}),
     });
     res.status(201).json(created);
   } catch (error) {
@@ -460,8 +663,10 @@ router.put('/tables/:table/:id', async (req, res) => {
     const updated = await lookup.delegate.update({
       where: { id },
       data,
-      ...(lookup.modelName === 'song' ? { include: { artists: true } } : {}),
+      ...(lookup.modelName === 'song' ? { include: { artists: true, albumRel: true } } : {}),
       ...(lookup.modelName === 'artist' ? { include: { songs: { select: { id: true, title: true, artist: true, youtubeId: true } } } } : {}),
+      ...(lookup.modelName === 'album' ? { include: { artist: true } } : {}),
+      ...(lookup.modelName === 'userSongPreference' ? { include: { user: true, song: true } } : {}),
     });
 
     res.json(updated);

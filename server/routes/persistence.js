@@ -64,6 +64,7 @@ router.get('/songs', async (req, res) => {
                 transpose: userPref ? userPref.transpose : (s.transpose || 0),
                 chordVariants: userPref?.chordVariants || s.chordVariants || null,
                 isCustom: userPref ? userPref.isCustom : Boolean(s.isCustom),
+                isInstrumental: Boolean(s.isInstrumental),
                 isFavorite: userPref ? userPref.isFavorite : false,
                 content: (userPref?.isCustom && userPref.customContent) ? userPref.customContent : s.content
             };
@@ -104,14 +105,19 @@ async function findExistingSong({ id, youtubeId, title, artist }) {
     return null;
 }
 
-// Guardar o actualizar versión personalizada de canción
+// Guardar o actualizar versión personalizada de canción (Exclusivo Administradores)
 router.post('/songs', async (req, res) => {
     const { 
         id, title, artist, artists, artistNames, content, youtubeId, syncData, 
-        transpose, chordVariants, originalContent, isCustom, artistImage, albumCover,
-        album, releaseYear, versionType, versionDetails 
+        transpose, chordVariants, originalContent, isCustom, isInstrumental, artistImage, albumCover,
+        album, releaseYear, versionType, versionDetails, user: userParam, userId
     } = req.body;
     try {
+        const activeUser = await getResolvedUser(userId || userParam);
+        if (!activeUser || (activeUser.role !== 'ADMIN' && activeUser.email !== 'gabothdev@gmail.com')) {
+            return res.status(403).json({ error: 'Solo los administradores pueden editar canciones en el catálogo' });
+        }
+
         const chordVariantsStr = typeof chordVariants === 'object' && chordVariants !== null ? JSON.stringify(chordVariants) : chordVariants;
         const parsedYear = releaseYear !== undefined ? (parseInt(releaseYear, 10) || null) : undefined;
         
@@ -156,6 +162,7 @@ router.post('/songs', async (req, res) => {
                 ...(versionDetails !== undefined ? { versionDetails } : {}),
                 ...(backupOriginalContent ? { originalContent: backupOriginalContent } : {}),
                 ...(isCustom !== undefined ? { isCustom: Boolean(isCustom) } : {}),
+                ...(isInstrumental !== undefined ? { isInstrumental: Boolean(isInstrumental) } : {}),
                 ...(connectedArtistIds ? { artists: { set: connectedArtistIds } } : {})
             },
             create: {
@@ -174,6 +181,7 @@ router.post('/songs', async (req, res) => {
                 versionDetails: versionDetails || null,
                 originalContent: backupOriginalContent || null,
                 isCustom: Boolean(isCustom),
+                isInstrumental: Boolean(isInstrumental),
                 ...(connectedArtistIds ? { artists: { connect: connectedArtistIds } } : {})
             },
             include: { artists: true }
@@ -254,10 +262,15 @@ router.post('/songs', async (req, res) => {
     }
 });
 
-// Restaurar versión original de la canción (revertir cambios personalizados)
+// Restaurar versión original de la canción (Exclusivo Administradores)
 router.post('/songs/restore-original', async (req, res) => {
-    const { id, title, artist } = req.body;
+    const { id, title, artist, user: userParam, userId } = req.body;
     try {
+        const activeUser = await getResolvedUser(userId || userParam);
+        if (!activeUser || (activeUser.role !== 'ADMIN' && activeUser.email !== 'gabothdev@gmail.com')) {
+            return res.status(403).json({ error: 'Solo los administradores pueden restaurar canciones en el catálogo' });
+        }
+
         let song = null;
         if (id) {
             song = await prisma.song.findUnique({ where: { id } });

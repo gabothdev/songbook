@@ -60,3 +60,44 @@ Este archivo rige para los componentes del visor de canciones (`SongSheetView`, 
     - Las canciones pueden contener compases de duración variable (ej. compases de silencio de 2 tiempos `2T`, anacrusas, compases en 3/4 o 6/8).
     - El índice de pulso de cualquier compás se calcula sumando acumulativamente `compas.acordes.length` (`measureBeatOffsets`).
     - Al hacer clic en una sección (`handleSelectSection`), se ubica el primer pulso real con `measureBeatOffsets[targetGlobalCompasIdx]`, se reproduce su primer acorde (`handlePlayChord(firstChord)`) y se empareja por nombre exacto de sección antes de recurrir al índice.
+11. **Arrastre del Marcador Rítmico / Needle Scrubber en Cinta (`BeatGrid.jsx`)**:
+    - En el modo Ribbon, el marcador de aguja permanece **fijo en el centro geométrico** (`left: 50%`) y cuenta con un manejador interactivo de arrastre horizontal (`cursor-ew-resize`).
+    - Al arrastrar el marcador hacia la derecha o izquierda, la aguja NO se desplaza: se desplaza suavemente la cinta del BeatGrid por debajo de ella para avanzar o retroceder.
+    - Durante el arrastre, se detecta en tiempo real el pulso ubicado bajo la aguja (`findBeatUnderNeedle`), iluminándolo y desplazando la reproducción de YouTube en tiempo real de forma silenciosa.
+    - Al soltar el marcador (`pointerup`), se centra el compás, se hace sonar el acorde correspondiente y se afianza el pulso seleccionado.
+
+---
+
+## 4. Permisos de Edición y Canciones Instrumentales
+1. **Acceso Exclusivo para Administradores**:
+   - El botón `Editar` en `SongHeaderControls.jsx` se renderiza **únicamente** cuando `isAdmin` es `true` (`currentUser.tier === 'ADMIN'`).
+   - Para usuarios Free o Pro, el botón se oculta por completo de la barra de controles.
+   - Los endpoints `POST /api/persistence/songs` y `POST /api/persistence/songs/restore-original` validan que el usuario solicitante posea rol `ADMIN`, rechazando con `403 Forbidden` cualquier intento no autorizado.
+2. **Flujo de Canción Instrumental ("Completamente instrumental")**:
+   - En `SongLyricsVisualEditor.jsx`, cuando una canción no tiene letra asignada (`isInstrumentalSong` retorna `true`), se despliega el aviso con dos opciones: *"➕ Añadir Letra a esta Canción"* y *"Completamente instrumental"*.
+   - Al presionar *"Completamente instrumental"*, se asigna `isInstrumental: true` en la base de datos, se desbloquea el lienzo de diseño para estructurar compases y acordes, y se previene que vuelva a mostrarse el bloqueo de letra faltante (`isExplicitInstrumental = true`).
+   - En el visor de lectura (`SongLyricsRenderer`), la canción instrumental renderiza sus secciones y acordes de forma regular y limpia sin interrupciones.
+
+---
+
+## 5. Escalado de BPM y Subdivisión/Fusión de Compases
+1. **Controles de Escalado (x2 / ÷2)**:
+   - Disponibles tanto en la barra superior de `SongLyricsVisualEditor.jsx` como en la cabecera del BeatGrid en `ChordCatalogPanel.jsx` durante el modo edición.
+   - Permiten duplicar el tempo (`x2`, llamando a `doubleGridBpm`) o reducirlo a la mitad (`÷2`, llamando a `halveGridBpm`).
+2. **Subdivisión Rítmica y Preservación de Tiempos**:
+   - `doubleGridBpm`: Convierte cada compás de 4 tiempos en 2 compases de 4 tiempos duplicando acordes (`[c0, c0, c1, c1]` y `[c2, c2, c3, c3]`), e interpolando linealmente los `beatTimes` para sincronización milimétrica con YouTube.
+   - `halveGridBpm`: Fusiona parejas consecutivas de compases en uno solo (`[c0, c2, c4, c6]`), preservando tiempos de inicio de sección (`secTime`) y etiquetas de sección.
+   - `updateTextBpm`: Actualiza dinámicamente la etiqueta `[BPM @ <val>]` en el texto de la canción. Al guardar cambios, la nueva estructura de compases se persiste en `syncData`.
+
+---
+
+## 6. Etiqueta Analógica de Video (`SongSheetView.jsx` & `FloatingVideoPaper.jsx`)
+1. **Acción Única de Minimizado**:
+   - `FloatingVideoPaper.jsx` cuenta con un único control de colapso/minimizado (`Minimize2`), prescindiendo de cierres destructivos.
+   - Al presionar dicho botón, el reproductor de video se minimiza y se transforma en la pestaña analógica ("etiqueta") abajo a la derecha (`bottom-6 sm:bottom-8`).
+2. **Reproducción Continua en Segundo Plano (Sin Interrupciones)**:
+   - Al minimizar a la etiqueta, el iframe de YouTube **NUNCA se destruye ni se detiene** (mantiene su ciclo de vida activo sin unmount ni reinicio de `window.YT.Player`).
+   - Si el video estaba sonando, continúa reproduciéndose fluidamente en segundo plano.
+   - El pulso rítmico y el seguimiento de tiempo con el BeatGrid continúan sincronizados en tiempo real.
+   - La etiqueta inferior derecha muestra un indicador activo de pulso y reproducción en vivo (`animate-ping` + `animate-pulse` en el botón `Play`).
+   - Al presionar la etiqueta, el reproductor flotante vuelve a la pantalla de inmediato, continuando la reproducción en el segundo exacto.
