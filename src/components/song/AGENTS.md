@@ -255,6 +255,19 @@ Este archivo rige para los componentes del visor de canciones (`SongSheetView`, 
 8. **Cálculo Matemático de Tiempos y Secciones (`lyricsTimingCalculator.js`) & Resaltado (`useLyricsSyncHighlight.js`)**:
    - Extrae las funciones puras `parseLineToChordSegments`, `parseSongStructure`, `calculateSectionTimingMap`, `calculateLineTimingsMap` y `resolveActivePlaybackLocation`.
    - `useLyricsSyncHighlight.js` gestiona de forma reactiva la correlación temporal entre el audio/pulsos y los versos de la canción (`activeSectionIdx`, `activeLineIdx`, `lineProgress`, `activeChordRank`).
+9. **Desplazamiento Rápido de Acordes (`[◀]` y `[▶]`) con División Silábica Natural (`handleNudgeChord`)**:
+   - En `WordChordDropSlot.jsx`, `LinePrefixChords` y `LineSuffixChords`, los badges de acordes exponen flechas de desplazamiento rápido en hover (`[◀]` y `[▶]`).
+   - Al presionar `◀` o `▶`, el acorde se desplaza una palabra o sílaba en la dirección deseada.
+   - Si la palabra destino ya tiene un acorde asignado y cuenta con $\ge 4$ letras, se divide automáticamente en sus sílabas naturales en español mediante `splitWordIntoTwoSyllables`, alojando el acorde entrante sin apilar dos acordes en la misma palabra. Si la palabra es corta o ya está dividida, intercambia los acordes limpiamente.
+   - Al presionar `◀` en la primera palabra de un verso, el acorde se transfiere a acordes previos (`prefixChords`); al presionar `▶` en la última palabra, se envía a acordes de remate (`suffixChords`).
+10. **Sincronización Automática de Secciones, Timestamps (`@ time`) y BeatGrid (`compases`) en División (`✂️`), Renombrado y Fronteras**:
+    - `SongLyricsVisualEditor` implementa `syncCompasesWithVisualSections` para mantener una correspondencia estricta e inmediata entre la letra y los compases del `BeatGrid` (`compases`).
+    - Al dividir una sección con la tijera (`✂️` en `handleSplitSectionAtLine`), el editor infiere inteligentemente el nombre de la nueva sección mediante `suggestSmartSectionName` (distinguiendo estribillos por similitud textual o numerando secuencialmente `Estrofa 1`, `Estrofa 2`, etc.), extrae automáticamente el `@ timestamp` exacto del verso a partir de `lineTimingsMap` / `compases`, y actualiza `c.seccion` y `c.secTime` en los compases correspondientes vía `onSaveCompases`.
+    - Al renombrar secciones, unirlas (`handleMergeWithPrevSection`) o mover sus fronteras arriba/abajo (`handleMoveBoundaryUp`, `handleMoveBoundaryDown`), los compases del BeatGrid y sus marcas de tiempo se actualizan en tiempo real sin requerir guardar manualmente ni salir del editor.
+11. **Detección y Cierre Automático de Secciones en Asistente Rítmico (`SteppedSyncWizardModal`)**:
+    - `useSteppedSyncEngine` detecta automáticamente saltos de línea (estrofas separadas por párrafos) y tags `[Sección]` desde la Etapa 1.
+    - Al presionar `[C]` durante la reproducción de la Etapa 2, si la canción comenzó con más de 2 segundos de introducción instrumental, el `[Intro]` se cierra automáticamente al marcar el primer verso cantado, y cada nueva estrofa abre su sección (`[Estrofa 1]`, `[Estribillo]`, etc.) sin obligar al usuario a presionar `[X]`.
+    - La distribución de acordes en `wizardChordDistributor` divide las palabras más largas en sílabas naturales cuando hay más acordes que palabras en un verso, desviando cualquier exceso residual a `suffixChords` para evitar saturación.
 
 ---
 

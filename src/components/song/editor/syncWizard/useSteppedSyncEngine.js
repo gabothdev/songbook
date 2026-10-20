@@ -47,19 +47,34 @@ export function useSteppedSyncEngine({
     );
     setAvailableChords(extractedChords.length > 0 ? extractedChords : ['C', 'G', 'Am', 'F']);
 
-    // Extract clean lines without section headers [Intro] and without bracket chords
-    const cleanLines = initialContent
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => {
-        if (l.match(/^\[(?:BPM|Beats|Time|TimeSignature|Metro)\b/i)) return false;
-        if (l.match(/^\[\s*([a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s\-_/]+?)(?:\s*@\s*[\d.]+)?\s*\]$/)) return false;
-        return true;
-      })
-      .map((l) => l.replace(/\[.*?\]/g, '').trim())
-      .filter((l) => l.length > 0);
+    // Extract clean lines preserving blank lines between stanzas/sections
+    const rawLines = initialContent.split('\n');
+    const cleanedOut = [];
+    for (let i = 0; i < rawLines.length; i++) {
+      const l = rawLines[i].trim();
+      if (!l) {
+        if (cleanedOut.length > 0 && cleanedOut[cleanedOut.length - 1] !== '') {
+          cleanedOut.push('');
+        }
+        continue;
+      }
+      if (l.match(/^\[(?:BPM|Beats|Time|TimeSignature|Metro)\b/i)) continue;
+      if (l.match(/^\[\s*([a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s\-_/]+?)(?:\s*@\s*[\d.]+)?\s*\]$/)) {
+        if (cleanedOut.length > 0 && cleanedOut[cleanedOut.length - 1] !== '') {
+          cleanedOut.push('');
+        }
+        continue;
+      }
+      const withoutBrackets = l.replace(/\[.*?\]/g, '').trim();
+      if (withoutBrackets.length > 0) {
+        cleanedOut.push(withoutBrackets);
+      }
+    }
+    while (cleanedOut.length > 0 && cleanedOut[cleanedOut.length - 1] === '') {
+      cleanedOut.pop();
+    }
 
-    setRawLyrics(cleanLines.join('\n'));
+    setRawLyrics(cleanedOut.join('\n'));
     setCurrentStep(1);
 
     // Reset sync state completely on modal opening
@@ -73,18 +88,91 @@ export function useSteppedSyncEngine({
     setIsNamingSection(false);
   }, [isOpen, initialContent, uniqueChords, compases]);
 
-  // Clean lines prepared for syncing (excludes section headers if user typed [Verso 1] in Step 1)
-  const parsedPhrases = useMemo(() => {
-    return rawLyrics
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => {
-        if (!l) return false;
-        if (l.match(/^\[(?:BPM|Beats|Time|TimeSignature|Metro)\b/i)) return false;
-        if (l.match(/^\[\s*([a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s\-_/]+?)(?:\s*@\s*[\d.]+)?\s*\]$/)) return false;
-        return true;
+  // Parse rawLyrics into stanzas & phrase metadata so blank lines or [Section] tags automatically trigger section transitions in Step 2
+  const phraseMetadata = useMemo(() => {
+    const lines = rawLyrics.split('\n');
+    const stanzas = [];
+    let currentStanza = { explicitName: null, lines: [] };
+
+    lines.forEach((rawLine) => {
+      const l = rawLine.trim();
+      if (!l) {
+        if (currentStanza.lines.length > 0) {
+          stanzas.push(currentStanza);
+          currentStanza = { explicitName: null, lines: [] };
+        }
+        return;
+      }
+      if (l.match(/^\[(?:BPM|Beats|Time|TimeSignature|Metro)\b/i)) return;
+      const secMatch = l.match(/^\[\s*([a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s\-_/]+?)(?:\s*@\s*[\d.]+)?\s*\]$/);
+      if (secMatch) {
+        const tag = secMatch[1].trim();
+        const isChord = /^[A-G][b#]?(?:m|maj|min|dim|aug|sus|add|\d|M|\/|[A-G][b#]?)*$/i.test(tag);
+        if (!isChord) {
+          if (currentStanza.lines.length > 0) {
+            stanzas.push(currentStanza);
+          }
+          currentStanza = { explicitName: tag, lines: [] };
+          return;
+        }
+      }
+      const cleanText = l.replace(/\[.*?\]/g, '').trim();
+      if (cleanText.length > 0) {
+        currentStanza.lines.push(cleanText);
+      }
+    });
+
+    if (currentStanza.lines.length > 0) {
+      stanzas.push(currentStanza);
+    }
+
+    // Detect repeated chorus stanzas by comparing normalized first lines
+    const normalizeKey = (s) => (s || '').toLowerCase().replace(/[^a-záéíóúüñ0-9]/g, '');
+    const firstLineCounts = {};
+    stanzas.forEach((st) => {
+      const k = normalizeKey(st.lines[0]);
+      if (k) firstLineCounts[k] = (firstLineCounts[k] || 0) + 1;
+    });
+
+    let estrofaCounter = 1;
+    let estribilloCounter = 1;
+    const flatMeta = [];
+
+    stanzas.forEach((st, stIdx) => {
+      let secName = st.explicitName;
+      if (!secName) {
+        const k = normalizeKey(st.lines[0]);
+        const isRepeatedStanza = k && firstLineCounts[k] > 1 && stIdx > 0;
+        const looksLikeChorus =
+          isRepeatedStanza ||
+          (k && firstLineCounts[k] > 1 && st.lines.length <= 5 && st.lines[0].startsWith('¡'));
+
+        if (looksLikeChorus) {
+          secName = estribilloCounter === 1 ? 'Estribillo' : `Estribillo ${estribilloCounter}`;
+          estribilloCounter++;
+        } else {
+          secName = `Estrofa ${estrofaCounter}`;
+          estrofaCounter++;
+        }
+      }
+
+      st.lines.forEach((lineText, lIdx) => {
+        flatMeta.push({
+          text: lineText,
+          startsNewSection: lIdx === 0 && (stIdx > 0 || Boolean(st.explicitName)),
+          sectionName: secName,
+          stanzaIndex: stIdx,
+        });
       });
+    });
+
+    return flatMeta;
   }, [rawLyrics]);
+
+  // Clean lines prepared for syncing
+  const parsedPhrases = useMemo(() => {
+    return phraseMetadata.map((m) => m.text);
+  }, [phraseMetadata]);
 
   // ================= STATE STEP 2 (SYNC) =================
   const [hasStartedSync, setHasStartedSync] = useState(false);
@@ -298,14 +386,85 @@ export function useSteppedSyncEngine({
   const markCurrentPhrase = useCallback(() => {
     if (currentPhraseIndex >= parsedPhrases.length) return;
 
-    let timeToRecord = currentTime;
+    let timeToRecord = liveCurrentTime;
     if (playerInstance && typeof playerInstance.getCurrentTime === 'function') {
-      timeToRecord = playerInstance.getCurrentTime() || currentTime;
+      timeToRecord = playerInstance.getCurrentTime() || liveCurrentTime;
     }
 
     const snappedStart = snapToNearestMeasure(timeToRecord);
     const phraseText = parsedPhrases[currentPhraseIndex];
+    const phraseMeta = phraseMetadata[currentPhraseIndex];
 
+    const newPhraseObj = {
+      text: phraseText,
+      time: snappedStart.time,
+      startMeasureId: snappedStart.measureId,
+      endTime: null,
+    };
+
+    // 1. Auto-close instrumental [Intro] when the very first sung phrase starts > 2.0s after Intro start
+    const isCurrentlyIntro = (currentSectionName || '').toLowerCase().includes('intro');
+    if (
+      currentPhraseIndex === 0 &&
+      syncedSections.length === 0 &&
+      currentSectionPhrases.length === 0 &&
+      isCurrentlyIntro &&
+      snappedStart.time >= currentSectionStartTime + 2.0
+    ) {
+      const introSec = {
+        name: currentSectionName || 'Intro',
+        startTime: currentSectionStartTime,
+        endTime: snappedStart.time,
+        phrases: [],
+      };
+      const firstVocalSecName = phraseMeta?.sectionName || 'Estrofa 1';
+      setSyncedSections([introSec]);
+      setCurrentSectionName(firstVocalSecName);
+      setCurrentSectionStartTime(snappedStart.time);
+      setCurrentSectionPhrases([newPhraseObj]);
+      setCurrentPhraseIndex(1);
+      showToast(
+        `[${introSec.name}] cerrada → [${firstVocalSecName}] iniciada en compás #${snappedStart.measureId} (@ ${formatTime(snappedStart.time)})`
+      );
+      return;
+    }
+
+    // 2. Auto-transition to a new section when Step 1 had a blank-line stanza break or [Section] tag
+    if (currentPhraseIndex > 0 && phraseMeta?.startsNewSection && currentSectionPhrases.length > 0) {
+      const closingName = currentSectionName || 'Estrofa 1';
+      const nextSecName = phraseMeta.sectionName || 'Estrofa';
+      const effectiveBoundaryTime = Math.max(currentSectionStartTime + 0.2, snappedStart.time);
+
+      const closedPhrases = currentSectionPhrases.map((p, idx, arr) => {
+        if (idx === arr.length - 1 && p.endTime == null) {
+          return {
+            ...p,
+            endTime: Math.max(p.time, effectiveBoundaryTime),
+            endMeasureId: snappedStart.measureId,
+          };
+        }
+        return p;
+      });
+
+      const completedSec = {
+        name: closingName,
+        startTime: currentSectionStartTime,
+        endTime: effectiveBoundaryTime,
+        phrases: closedPhrases,
+      };
+
+      setSyncedSections((prev) => [...prev, completedSec]);
+      setCurrentSectionName(nextSecName);
+      setCurrentSectionStartTime(effectiveBoundaryTime);
+      setCurrentSectionPhrases([newPhraseObj]);
+      setCurrentPhraseIndex((prev) => prev + 1);
+      showToast(
+        `Nueva sección [${nextSecName}]: "${phraseText.slice(0, 18)}..." en compás #${snappedStart.measureId} (@ ${formatTime(snappedStart.time)})`
+      );
+      return;
+    }
+
+    // 3. Regular phrase mark inside the active section
     setCurrentSectionPhrases((prev) => {
       // If the preceding phrase was still open, close it automatically at the new phrase start time
       const updated = prev.map((p, idx) => {
@@ -320,19 +479,26 @@ export function useSteppedSyncEngine({
         return p;
       });
 
-      const newPhraseObj = {
-        text: phraseText,
-        time: snappedStart.time,
-        startMeasureId: snappedStart.measureId,
-        endTime: null,
-      };
-
       return [...updated, newPhraseObj];
     });
 
     setCurrentPhraseIndex((prev) => prev + 1);
-    showToast(`Inicio: "${phraseText.slice(0, 18)}..." en compás #${snappedStart.measureId} (@ ${formatTime(snappedStart.time)})`);
-  }, [currentPhraseIndex, parsedPhrases, currentTime, playerInstance, snapToNearestMeasure, showToast]);
+    showToast(
+      `Inicio: "${phraseText.slice(0, 18)}..." en compás #${snappedStart.measureId} (@ ${formatTime(snappedStart.time)})`
+    );
+  }, [
+    currentPhraseIndex,
+    parsedPhrases,
+    phraseMetadata,
+    liveCurrentTime,
+    playerInstance,
+    snapToNearestMeasure,
+    currentSectionName,
+    syncedSections.length,
+    currentSectionPhrases,
+    currentSectionStartTime,
+    showToast,
+  ]);
 
   // ================= ACTION: MARK PHRASE END (KEY V) =================
   const markCurrentPhraseEnd = useCallback(() => {
@@ -735,6 +901,7 @@ export function useSteppedSyncEngine({
     setRawLyrics,
     availableChords,
     parsedPhrases,
+    phraseMetadata,
     hasStartedSync,
     firstSectionName,
     setFirstSectionName,

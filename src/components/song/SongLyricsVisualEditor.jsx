@@ -32,6 +32,7 @@ import EditorToolbar from './editor/EditorToolbar';
 import ChordStampBar from './editor/ChordStampBar';
 import QuickChordPickerModal from './editor/QuickChordPickerModal';
 import SteppedSyncWizardModal from './editor/SteppedSyncWizardModal';
+import { splitWordIntoTwoSyllables } from './editor/syncWizard/wizardChordDistributor';
 import {
   calculateSectionTimingMap,
   calculateLineTimingsMap,
@@ -454,6 +455,201 @@ export default function SongLyricsVisualEditor({
     updateContentWithHistory(reconstructTextFromBlocks(updated));
   };
 
+  // ◀ ▶ Shift a chord left or right across words, syllables, or prefix/suffix
+  const handleNudgeChord = (secIdx, lineIdx, sourceType, index, direction) => {
+    const updated = JSON.parse(JSON.stringify(visualSections));
+    const sec = updated[secIdx];
+    if (!sec) return;
+    const line = sec.lines?.[lineIdx];
+    if (!line) return;
+
+    if (!line.prefixChords) line.prefixChords = [];
+    if (!line.words) line.words = [];
+    if (!line.suffixChords) line.suffixChords = [];
+
+    const wordIndices = [];
+    line.words.forEach((w, idx) => {
+      if (w.type === 'word') wordIndices.push(idx);
+    });
+
+    let nudgedChord = null;
+
+    if (sourceType === 'word') {
+      const currentWordIdx = index;
+      const currentWord = line.words[currentWordIdx];
+      if (!currentWord || !currentWord.chord) return;
+      nudgedChord = currentWord.chord;
+
+      const pos = wordIndices.indexOf(currentWordIdx);
+      if (pos === -1) return;
+
+      if (direction === -1) {
+        // Shift LEFT (◀)
+        if (pos > 0) {
+          const targetIdx = wordIndices[pos - 1];
+          const targetWord = line.words[targetIdx];
+          if (!targetWord.chord) {
+            targetWord.chord = nudgedChord;
+            currentWord.chord = null;
+          } else {
+            const cleanText = targetWord.text.replace(/[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]/g, '');
+            const sylParts = splitWordIntoTwoSyllables(targetWord.text);
+            if (cleanText.length >= 4 && sylParts) {
+              const splitPos = sylParts[0].length;
+              line.words = splitWordAtChar(line.words, targetWord.id, splitPos);
+              const newTargetIdx = line.words.findIndex((w) => w.id === targetWord.id);
+              if (newTargetIdx >= 0 && newTargetIdx + 1 < line.words.length) {
+                line.words[newTargetIdx + 1].chord = nudgedChord;
+              }
+              const updatedCurrent = line.words.find((w) => w.id === currentWord.id);
+              if (updatedCurrent) updatedCurrent.chord = null;
+            } else {
+              const tmp = targetWord.chord;
+              targetWord.chord = nudgedChord;
+              currentWord.chord = tmp;
+            }
+          }
+        } else {
+          // At beginning of line: move to prefixChords
+          line.prefixChords.push({
+            id: `p_${Math.random().toString(36).substring(2, 8)}`,
+            chord: nudgedChord,
+          });
+          currentWord.chord = null;
+        }
+      } else if (direction === 1) {
+        // Shift RIGHT (▶)
+        if (pos < wordIndices.length - 1) {
+          const targetIdx = wordIndices[pos + 1];
+          const targetWord = line.words[targetIdx];
+          if (!targetWord.chord) {
+            targetWord.chord = nudgedChord;
+            currentWord.chord = null;
+          } else {
+            const currClean = currentWord.text.replace(/[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]/g, '');
+            const currSyl = splitWordIntoTwoSyllables(currentWord.text);
+            if (currClean.length >= 4 && currSyl && !currentWord.isSyllable) {
+              const splitPos = currSyl[0].length;
+              line.words = splitWordAtChar(line.words, currentWord.id, splitPos);
+              const newCurrIdx = line.words.findIndex((w) => w.id === currentWord.id);
+              if (newCurrIdx >= 0 && newCurrIdx + 1 < line.words.length) {
+                line.words[newCurrIdx].chord = null;
+                line.words[newCurrIdx + 1].chord = nudgedChord;
+              }
+            } else {
+              const targetClean = targetWord.text.replace(/[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]/g, '');
+              const targetSyl = splitWordIntoTwoSyllables(targetWord.text);
+              if (targetClean.length >= 4 && targetSyl) {
+                const splitPos = targetSyl[0].length;
+                line.words = splitWordAtChar(line.words, targetWord.id, splitPos);
+                const newTargetIdx = line.words.findIndex((w) => w.id === targetWord.id);
+                if (newTargetIdx >= 0 && newTargetIdx + 1 < line.words.length) {
+                  line.words[newTargetIdx + 1].chord = nudgedChord;
+                }
+                const updatedCurrent = line.words.find((w) => w.id === currentWord.id);
+                if (updatedCurrent) updatedCurrent.chord = null;
+              } else {
+                const tmp = targetWord.chord;
+                targetWord.chord = nudgedChord;
+                currentWord.chord = tmp;
+              }
+            }
+          }
+        } else {
+          // At end of line: move to suffixChords
+          line.suffixChords.unshift({
+            id: `s_${Math.random().toString(36).substring(2, 8)}`,
+            chord: nudgedChord,
+          });
+          currentWord.chord = null;
+        }
+      }
+    } else if (sourceType === 'prefix') {
+      const pIdx = index;
+      if (!line.prefixChords[pIdx]) return;
+      nudgedChord = line.prefixChords[pIdx].chord;
+
+      if (direction === -1) {
+        if (pIdx > 0) {
+          const tmp = line.prefixChords[pIdx - 1];
+          line.prefixChords[pIdx - 1] = line.prefixChords[pIdx];
+          line.prefixChords[pIdx] = tmp;
+        }
+      } else if (direction === 1) {
+        if (pIdx < line.prefixChords.length - 1) {
+          const tmp = line.prefixChords[pIdx + 1];
+          line.prefixChords[pIdx + 1] = line.prefixChords[pIdx];
+          line.prefixChords[pIdx] = tmp;
+        } else if (wordIndices.length > 0) {
+          const firstWord = line.words[wordIndices[0]];
+          if (!firstWord.chord) {
+            firstWord.chord = nudgedChord;
+            line.prefixChords.splice(pIdx, 1);
+          } else {
+            const cleanText = firstWord.text.replace(/[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]/g, '');
+            const sylParts = splitWordIntoTwoSyllables(firstWord.text);
+            if (cleanText.length >= 4 && sylParts) {
+              const splitPos = sylParts[0].length;
+              line.words = splitWordAtChar(line.words, firstWord.id, splitPos);
+              const newFirstIdx = line.words.findIndex((w) => w.id === firstWord.id);
+              if (newFirstIdx >= 0) {
+                line.words[newFirstIdx].chord = nudgedChord;
+              }
+              line.prefixChords.splice(pIdx, 1);
+            } else {
+              const tmp = firstWord.chord;
+              firstWord.chord = nudgedChord;
+              line.prefixChords[pIdx].chord = tmp;
+            }
+          }
+        }
+      }
+    } else if (sourceType === 'suffix') {
+      const sIdx = index;
+      if (!line.suffixChords[sIdx]) return;
+      nudgedChord = line.suffixChords[sIdx].chord;
+
+      if (direction === 1) {
+        if (sIdx < line.suffixChords.length - 1) {
+          const tmp = line.suffixChords[sIdx + 1];
+          line.suffixChords[sIdx + 1] = line.suffixChords[sIdx];
+          line.suffixChords[sIdx] = tmp;
+        }
+      } else if (direction === -1) {
+        if (sIdx > 0) {
+          const tmp = line.suffixChords[sIdx - 1];
+          line.suffixChords[sIdx - 1] = line.suffixChords[sIdx];
+          line.suffixChords[sIdx] = tmp;
+        } else if (wordIndices.length > 0) {
+          const lastWord = line.words[wordIndices[wordIndices.length - 1]];
+          if (!lastWord.chord) {
+            lastWord.chord = nudgedChord;
+            line.suffixChords.splice(sIdx, 1);
+          } else {
+            const cleanText = lastWord.text.replace(/[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]/g, '');
+            const sylParts = splitWordIntoTwoSyllables(lastWord.text);
+            if (cleanText.length >= 4 && sylParts) {
+              const splitPos = sylParts[0].length;
+              line.words = splitWordAtChar(line.words, lastWord.id, splitPos);
+              const newLastIdx = line.words.findIndex((w) => w.id === lastWord.id);
+              if (newLastIdx >= 0 && newLastIdx + 1 < line.words.length) {
+                line.words[newLastIdx + 1].chord = nudgedChord;
+              }
+              line.suffixChords.splice(sIdx, 1);
+            } else {
+              const tmp = lastWord.chord;
+              lastWord.chord = nudgedChord;
+              line.suffixChords[sIdx].chord = tmp;
+            }
+          }
+        }
+      }
+    }
+
+    updateContentWithHistory(reconstructTextFromBlocks(updated));
+    showToast(`Acorde [${nudgedChord}] desplazado`);
+  };
+
   // Fine Syllable Split (✂️)
   const handleSplitWord = (secIdx, lineIdx, wordId, splitCharIndex) => {
     const updated = JSON.parse(JSON.stringify(visualSections));
@@ -654,6 +850,89 @@ export default function SongLyricsVisualEditor({
     }
   };
 
+  // Smart section namer based on lyric similarity or sequential numbering
+  const suggestSmartSectionName = (sections, secIdx, linesForNewSec) => {
+    const allText = (linesForNewSec || [])
+      .map((l) => (l.words || []).map((w) => w.text).join(''))
+      .join(' ')
+      .toLowerCase();
+
+    const isChorusLike =
+      allText.includes('estribillo') ||
+      allText.includes('coro') ||
+      sections.some(
+        (s) =>
+          s.name.toLowerCase().includes('estribillo') &&
+          s.lines?.some((sl) => {
+            const slText = (sl.words || []).map((w) => w.text).join('').toLowerCase();
+            return slText.length > 8 && allText.includes(slText.slice(0, 15));
+          })
+      );
+
+    if (isChorusLike) {
+      const chorusCount = sections.filter((s) => s.name.toLowerCase().includes('estribillo')).length;
+      return chorusCount === 0 ? 'Estribillo' : `Estribillo ${chorusCount + 1}`;
+    }
+
+    const estrofaCount = sections.filter((s) => s.name.toLowerCase().includes('estrofa')).length;
+    return estrofaCount === 0 ? 'Estrofa 2' : `Estrofa ${estrofaCount + 1}`;
+  };
+
+  // Synchronize section names and @ timestamps with BeatGrid measures
+  const syncCompasesWithVisualSections = (updatedSections) => {
+    if (!onSaveCompases || !Array.isArray(compases) || compases.length === 0) return;
+
+    const timingLookup = new Map();
+    visualSections.forEach((sec, sIdx) => {
+      (sec.lines || []).forEach((line, lIdx) => {
+        const lt = lineTimingsMap?.[sIdx]?.[lIdx];
+        if (line?.id && lt) {
+          timingLookup.set(line.id, lt);
+        }
+      });
+    });
+
+    const nextCompases = compases.map((c) => ({ ...c }));
+
+    updatedSections.forEach((sec) => {
+      let firstTiming = null;
+      let minCompIdx = Infinity;
+      let maxCompIdx = -1;
+
+      (sec.lines || []).forEach((line) => {
+        const lt = timingLookup.get(line.id);
+        if (lt) {
+          if (!firstTiming && lt.startTime != null) {
+            firstTiming = lt;
+          }
+          if (lt.startCompasIdx >= 0 && lt.startCompasIdx < minCompIdx) {
+            minCompIdx = lt.startCompasIdx;
+          }
+          if (lt.endCompasIdx >= 0 && lt.endCompasIdx > maxCompIdx) {
+            maxCompIdx = lt.endCompasIdx;
+          }
+        }
+      });
+
+      if (firstTiming && firstTiming.startTime != null) {
+        if (!sec.time || sec.time === 'null') {
+          sec.time = Number(firstTiming.startTime).toFixed(1);
+        }
+      }
+
+      if (minCompIdx <= maxCompIdx && minCompIdx < nextCompases.length) {
+        for (let m = minCompIdx; m <= maxCompIdx && m < nextCompases.length; m++) {
+          nextCompases[m].seccion = sec.name;
+          if (m === minCompIdx && sec.time) {
+            nextCompases[m].secTime = Number(sec.time);
+          }
+        }
+      }
+    });
+
+    onSaveCompases(nextCompases);
+  };
+
   // Move boundary UP: contract current section by moving its last verse to next section
   const handleMoveBoundaryUp = (secIdx) => {
     if (secIdx >= visualSections.length - 1) return;
@@ -666,11 +945,13 @@ export default function SongLyricsVisualEditor({
     if (!movedLine) return;
 
     nextSec.lines.unshift(movedLine);
+    nextSec.time = null; // Re-align timestamp with new opening line
 
     if (currentSec.lines.length === 0) {
       updated.splice(secIdx, 1);
     }
 
+    syncCompasesWithVisualSections(updated);
     updateContentWithHistory(reconstructTextFromBlocks(updated));
     showToast(`Límite subido: verso cedido a [${nextSec.name}]`);
   };
@@ -687,11 +968,13 @@ export default function SongLyricsVisualEditor({
     if (!movedLine) return;
 
     currentSec.lines.push(movedLine);
+    nextSec.time = null; // Re-align timestamp with new opening line
 
     if (nextSec.lines.length === 0) {
       updated.splice(secIdx + 1, 1);
     }
 
+    syncCompasesWithVisualSections(updated);
     updateContentWithHistory(reconstructTextFromBlocks(updated));
     showToast(`Límite bajado: verso añadido a [${currentSec.name}]`);
   };
@@ -715,6 +998,7 @@ export default function SongLyricsVisualEditor({
       if (currentSec.lines.length === 0) {
         updated.splice(secIdx, 1);
       }
+      syncCompasesWithVisualSections(updated);
       updateContentWithHistory(reconstructTextFromBlocks(updated));
       showToast(`Verso movido a [${prevSec.name}]`);
     }
@@ -739,26 +1023,37 @@ export default function SongLyricsVisualEditor({
       if (currentSec.lines.length === 0) {
         updated.splice(secIdx, 1);
       }
+      syncCompasesWithVisualSections(updated);
       updateContentWithHistory(reconstructTextFromBlocks(updated));
       showToast(`Verso movido a [${nextSec.name}]`);
     }
   };
 
   // Split section at line
-  const handleSplitSectionAtLine = (secIdx, lineIdx, newSectionName = 'Estrofa') => {
+  const handleSplitSectionAtLine = (secIdx, lineIdx, requestedName = null) => {
     const updated = JSON.parse(JSON.stringify(visualSections));
     const sec = updated[secIdx];
     if (!sec || lineIdx <= 0 || lineIdx >= sec.lines.length) return;
 
     const linesForNewSec = sec.lines.splice(lineIdx);
+    const newSectionName = requestedName || suggestSmartSectionName(updated, secIdx, linesForNewSec);
+
+    if (sec.name.trim() === 'Estrofa') {
+      sec.name = 'Estrofa 1';
+    }
+
+    const splitLineTiming = lineTimingsMap?.[secIdx]?.[lineIdx];
+    const initialTime = splitLineTiming?.startTime != null ? Number(splitLineTiming.startTime).toFixed(1) : null;
+
     const newSec = {
       id: `sec_${Date.now()}_split`,
       name: newSectionName,
-      time: null,
+      time: initialTime,
       lines: linesForNewSec,
     };
 
     updated.splice(secIdx + 1, 0, newSec);
+    syncCompasesWithVisualSections(updated);
     updateContentWithHistory(reconstructTextFromBlocks(updated));
     showToast(`Nueva sección [${newSectionName}] creada`);
   };
@@ -769,6 +1064,7 @@ export default function SongLyricsVisualEditor({
     const updated = JSON.parse(JSON.stringify(visualSections));
     if (updated[secIdx]) {
       updated[secIdx].name = newName.trim();
+      syncCompasesWithVisualSections(updated);
       updateContentWithHistory(reconstructTextFromBlocks(updated));
       showToast(`Sección renombrada a [${newName.trim()}]`);
     }
@@ -863,6 +1159,7 @@ export default function SongLyricsVisualEditor({
     prevSec.lines.push(...currentSec.lines);
     updated.splice(secIdx, 1);
 
+    syncCompasesWithVisualSections(updated);
     updateContentWithHistory(reconstructTextFromBlocks(updated));
     setEditingSectionPopover(null);
     showToast(`Sección unida a [${prevSec.name}]`);
@@ -1297,6 +1594,7 @@ export default function SongLyricsVisualEditor({
                               activeStampChord={activeStampChord}
                               onAddPrefixChord={handleAddPrefixChord}
                               onRemovePrefixChord={handleRemovePrefixChord}
+                              onNudgeChord={handleNudgeChord}
                               onOpenPicker={setSelectedWordForPicker}
                               onAssignChord={handleAssignChordToWord}
                               onNavigateChord={(chordName, chordRank, pIdx) =>
@@ -1334,6 +1632,7 @@ export default function SongLyricsVisualEditor({
                                     onDragLeave={handleDragLeaveWord}
                                     onDrop={handleDropOnWord}
                                     onAssignChord={handleAssignChordToWord}
+                                    onNudgeChord={handleNudgeChord}
                                     onOpenPicker={setSelectedWordForPicker}
                                     onUpdateWordText={handleUpdateWordText}
                                     onSplitWord={handleSplitWord}
@@ -1372,6 +1671,7 @@ export default function SongLyricsVisualEditor({
                               activeStampChord={activeStampChord}
                               onAddSuffixChord={handleAddSuffixChord}
                               onRemoveSuffixChord={handleRemoveSuffixChord}
+                              onNudgeChord={handleNudgeChord}
                               onOpenPicker={setSelectedWordForPicker}
                               onNavigateChord={(chordName, chordRank, sIdx) =>
                                 handleNavigateToChord(
@@ -1441,7 +1741,7 @@ export default function SongLyricsVisualEditor({
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    handleSplitSectionAtLine(secIdx, lineIdx, 'Estrofa')
+                                    handleSplitSectionAtLine(secIdx, lineIdx)
                                   }
                                   className="p-0.5 rounded bg-stone-100 hover:bg-amber-100 text-stone-600 hover:text-amber-900 transition-colors cursor-pointer"
                                   title="Dividir en una nueva sección a partir de aquí"

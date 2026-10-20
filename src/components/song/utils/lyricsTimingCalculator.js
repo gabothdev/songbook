@@ -244,18 +244,87 @@ export function calculateLineTimingsMap(compases = [], sections = [], sectionTim
     };
   });
 
-  const compasesBySection = {};
+  // Group contiguous runs of compases by section name so repeated section names (e.g. two [Estribillo])
+  // map to their respective chronological measures rather than colliding into a single bucket.
+  const sectionRuns = [];
   enrichedCompases.forEach((c) => {
     const sName = (c.seccion || 'Intro').trim().toLowerCase();
-    if (!compasesBySection[sName]) compasesBySection[sName] = [];
-    compasesBySection[sName].push(c);
+    const lastRun = sectionRuns[sectionRuns.length - 1];
+    if (!lastRun || lastRun.name !== sName) {
+      sectionRuns.push({ name: sName, used: false, compases: [c] });
+    } else {
+      lastRun.compases.push(c);
+    }
   });
 
+  const normalizeLyricKey = (str) =>
+    (str || '')
+      .replace(/\[.*?\]/g, '')
+      .replace(/\u200D/g, '')
+      .toLowerCase()
+      .replace(/[^a-záéíóúüñ0-9]/g, '');
+
   const result = [];
+  let fallbackGlobalCursor = 0;
 
   sections.forEach((sec, sIdx) => {
     const sName = sec.name.trim().toLowerCase();
-    const secCompases = compasesBySection[sName] || [];
+    // 1. Try next unused contiguous run with matching section name
+    let matchingRun = sectionRuns.find((r) => !r.used && r.name === sName);
+    let secCompases = [];
+
+    if (matchingRun) {
+      matchingRun.used = true;
+      secCompases = matchingRun.compases;
+      const lastGlobal = secCompases[secCompases.length - 1]?.globalIdx;
+      if (lastGlobal !== undefined) fallbackGlobalCursor = lastGlobal + 1;
+    } else {
+      // 2. Fallback when user splits or renames a section in the Visual Editor:
+      //    Locate measures by section start/end time or by matching c.lyric of the section's lines
+      const secStart = sectionTimingMap[sIdx]?.startTime;
+      const nextSecStart = sectionTimingMap[sIdx]?.nextTime;
+
+      if (secStart != null) {
+        secCompases = enrichedCompases.filter((c) => {
+          const t = c.beatTimes?.[0] ?? c.secTime;
+          if (t == null) return false;
+          const afterStart = t >= secStart - 0.35;
+          const beforeEnd = nextSecStart != null ? t < nextSecStart - 0.25 : true;
+          return afterStart && beforeEnd;
+        });
+      }
+
+      if (secCompases.length === 0) {
+        const firstVocalLine = (sec.lines || [])
+          .map((l) => normalizeLyricKey(l))
+          .find((k) => k.length > 0);
+        if (firstVocalLine) {
+          const startIdx = enrichedCompases.findIndex(
+            (c, idx) => idx >= fallbackGlobalCursor && normalizeLyricKey(c.lyric) === firstVocalLine
+          );
+          if (startIdx !== -1) {
+            let endIdx = enrichedCompases.length;
+            for (let ns = sIdx + 1; ns < sections.length; ns++) {
+              const nextVocal = (sections[ns].lines || [])
+                .map((l) => normalizeLyricKey(l))
+                .find((k) => k.length > 0);
+              if (nextVocal) {
+                const foundNext = enrichedCompases.findIndex(
+                  (c, idx) => idx > startIdx && normalizeLyricKey(c.lyric) === nextVocal
+                );
+                if (foundNext !== -1) {
+                  endIdx = foundNext;
+                  break;
+                }
+              }
+            }
+            secCompases = enrichedCompases.slice(startIdx, endIdx);
+            fallbackGlobalCursor = endIdx;
+          }
+        }
+      }
+    }
+
     const linesTiming = [];
 
     if (secCompases.length === 0) {
@@ -298,9 +367,37 @@ export function calculateLineTimingsMap(compases = [], sections = [], sectionTim
       const lineChords = extractLineChords(trimmed);
       const lineChordCount = lineChords.length;
       const startsWithUnchordedPhrase = hasLeadingUnchordedPhrase(trimmed);
+      const currentLineLyricKey = normalizeLyricKey(trimmed);
+
+      // Si los compases poseen marcas explícitas de letra (c.lyric del Wizard), anclar directamente el inicio y fin del verso
+      let anchoredByLyricSpan = 0;
+      if (currentLineLyricKey.length > 0) {
+        const exactMatchIdx = secCompases.findIndex(
+          (c, idx) => idx >= compasOffset && normalizeLyricKey(c.lyric) === currentLineLyricKey
+        );
+        if (exactMatchIdx !== -1) {
+          compasOffset = exactMatchIdx;
+          // Buscar dónde empieza la siguiente línea con letra en secCompases
+          let nextMatchIdx = -1;
+          for (let nl = lIdx + 1; nl < sec.lines.length; nl++) {
+            const nextKey = normalizeLyricKey(sec.lines[nl]);
+            if (nextKey.length > 0) {
+              const found = secCompases.findIndex(
+                (c, idx) => idx > exactMatchIdx && normalizeLyricKey(c.lyric) === nextKey
+              );
+              if (found !== -1) {
+                nextMatchIdx = found;
+                break;
+              }
+            }
+          }
+          anchoredByLyricSpan =
+            nextMatchIdx !== -1 ? nextMatchIdx - exactMatchIdx : secCompases.length - exactMatchIdx;
+        }
+      }
 
       // Si esta línea tiene acordes musicales y los compases actuales al inicio son silencios puros, avanzarlos
-      if (lineChordCount > 0) {
+      if (lineChordCount > 0 && anchoredByLyricSpan === 0) {
         while (
           compasOffset < secCompases.length &&
           getCompasDistinctChords(secCompases[compasOffset]).every((ch) => ch === '𝄾')
@@ -326,97 +423,105 @@ export function calculateLineTimingsMap(compases = [], sections = [], sectionTim
 
       let compasesForThisLine = 0;
       let chordsAccum = 0;
+      let leadInCompasesCount = 0;
 
       if (lineChordCount === 0) {
-        const startComp = secCompases[compasOffset];
-        const startDistinct = getCompasDistinctChords(startComp);
-        const sustainedChord = startDistinct[0];
-        let runLen = 0;
-        while (compasOffset + runLen < secCompases.length) {
-          const d = getCompasDistinctChords(secCompases[compasOffset + runLen]);
-          if (d.length === 1 && d[0] === sustainedChord) {
-            runLen++;
-          } else {
-            break;
-          }
-        }
-        if (nextLineFirstChord && nextLineFirstChord !== sustainedChord && runLen > 0) {
-          compasesForThisLine = runLen;
+        if (anchoredByLyricSpan > 0) {
+          compasesForThisLine = anchoredByLyricSpan;
         } else {
-          compasesForThisLine = Math.max(1, Math.min(runLen, 2));
-        }
-      } else {
-        const firstTargetChord = lineChords[0];
-        let leadInCompasesCount = 0;
-        if (startsWithUnchordedPhrase && compasOffset < secCompases.length) {
-          const firstCompDistinct = getCompasDistinctChords(secCompases[compasOffset]);
-          const leadInChord = firstCompDistinct[0];
-          if (firstCompDistinct.length === 1 && leadInChord !== '𝄾' && leadInChord !== firstTargetChord) {
-            while (compasOffset + compasesForThisLine < secCompases.length) {
-              const d = getCompasDistinctChords(secCompases[compasOffset + compasesForThisLine]);
-              if (d.length === 1 && d[0] === leadInChord) {
-                compasesForThisLine++;
-                leadInCompasesCount++;
-              } else {
-                break;
-              }
-            }
-          }
-        }
-
-        let lastSeenChord = null;
-        while (compasOffset + compasesForThisLine < secCompases.length) {
-          const comp = secCompases[compasOffset + compasesForThisLine];
-          const distinctInCompas = getCompasDistinctChords(comp);
-          for (const ch of distinctInCompas) {
-            if (ch === '𝄾') continue;
-            const expectedNextChord = chordsAccum < lineChords.length ? lineChords[chordsAccum] : null;
-            const isExplicitRepeatInLine =
-              chordsAccum > 0 &&
-              expectedNextChord !== null &&
-              expectedNextChord === lastSeenChord &&
-              ch === expectedNextChord;
-
-            if (ch !== lastSeenChord || isExplicitRepeatInLine) {
-              chordsAccum++;
-              lastSeenChord = ch;
-            }
-          }
-          compasesForThisLine++;
-          if (chordsAccum >= lineChordCount) break;
-        }
-
-        if (lastSeenChord && compasOffset + compasesForThisLine < secCompases.length) {
-          let sustainedExtra = 0;
-          while (compasOffset + compasesForThisLine + sustainedExtra < secCompases.length) {
-            const nextD = getCompasDistinctChords(secCompases[compasOffset + compasesForThisLine + sustainedExtra]);
-            if (nextD.length === 1 && nextD[0] === lastSeenChord) {
-              sustainedExtra++;
+          const startComp = secCompases[compasOffset];
+          const startDistinct = getCompasDistinctChords(startComp);
+          const sustainedChord = startDistinct[0];
+          let runLen = 0;
+          while (compasOffset + runLen < secCompases.length) {
+            const d = getCompasDistinctChords(secCompases[compasOffset + runLen]);
+            if (d.length === 1 && d[0] === sustainedChord) {
+              runLen++;
             } else {
               break;
             }
           }
-
-          if (sustainedExtra > 0) {
-            if (hasNextLineInSec && nextLineFirstChord === lastSeenChord && !nextLineStartsWithUnchordedPhrase) {
-              // La siguiente línea comienza explícitamente con este mismo acorde (ej. [A] [A] seguido de [A] [A]):
-              // no robarle sus compases a la siguiente línea.
-            } else if (
-              hasNextLineInSec &&
-              (!nextLineHasChords || nextLineStartsWithUnchordedPhrase)
-            ) {
-              const totalSustainedRun = 1 + sustainedExtra;
-              const takeForCurrent = Math.max(1, Math.ceil(totalSustainedRun / 2));
-              compasesForThisLine += takeForCurrent - 1;
-            } else {
-              compasesForThisLine += sustainedExtra;
-            }
+          if (nextLineFirstChord && nextLineFirstChord !== sustainedChord && runLen > 0) {
+            compasesForThisLine = runLen;
+          } else {
+            compasesForThisLine = Math.max(1, Math.min(runLen, 2));
           }
         }
+      } else {
+        if (anchoredByLyricSpan > 0) {
+          compasesForThisLine = anchoredByLyricSpan;
+        } else {
+          const firstTargetChord = lineChords[0];
+          if (startsWithUnchordedPhrase && compasOffset < secCompases.length) {
+            const firstCompDistinct = getCompasDistinctChords(secCompases[compasOffset]);
+            const leadInChord = firstCompDistinct[0];
+            if (firstCompDistinct.length === 1 && leadInChord !== '𝄾' && leadInChord !== firstTargetChord) {
+              while (compasOffset + compasesForThisLine < secCompases.length) {
+                const d = getCompasDistinctChords(secCompases[compasOffset + compasesForThisLine]);
+                if (d.length === 1 && d[0] === leadInChord) {
+                  compasesForThisLine++;
+                  leadInCompasesCount++;
+                } else {
+                  break;
+                }
+              }
+            }
+          }
 
-        const isLastLine = lIdx === sec.lines.length - 1;
-        if (isLastLine && compasOffset + compasesForThisLine < secCompases.length) {
-          compasesForThisLine = secCompases.length - compasOffset;
+          let lastSeenChord = null;
+          while (compasOffset + compasesForThisLine < secCompases.length) {
+            const comp = secCompases[compasOffset + compasesForThisLine];
+            const distinctInCompas = getCompasDistinctChords(comp);
+            for (const ch of distinctInCompas) {
+              if (ch === '𝄾') continue;
+              const expectedNextChord = chordsAccum < lineChords.length ? lineChords[chordsAccum] : null;
+              const isExplicitRepeatInLine =
+                chordsAccum > 0 &&
+                expectedNextChord !== null &&
+                expectedNextChord === lastSeenChord &&
+                ch === expectedNextChord;
+
+              if (ch !== lastSeenChord || isExplicitRepeatInLine) {
+                chordsAccum++;
+                lastSeenChord = ch;
+              }
+            }
+            compasesForThisLine++;
+            if (chordsAccum >= lineChordCount) break;
+          }
+
+          if (lastSeenChord && compasOffset + compasesForThisLine < secCompases.length) {
+            let sustainedExtra = 0;
+            while (compasOffset + compasesForThisLine + sustainedExtra < secCompases.length) {
+              const nextD = getCompasDistinctChords(secCompases[compasOffset + compasesForThisLine + sustainedExtra]);
+              if (nextD.length === 1 && nextD[0] === lastSeenChord) {
+                sustainedExtra++;
+              } else {
+                break;
+              }
+            }
+
+            if (sustainedExtra > 0) {
+              if (hasNextLineInSec && nextLineFirstChord === lastSeenChord && !nextLineStartsWithUnchordedPhrase) {
+                // La siguiente línea comienza explícitamente con este mismo acorde (ej. [A] [A] seguido de [A] [A]):
+                // no robarle sus compases a la siguiente línea.
+              } else if (
+                hasNextLineInSec &&
+                (!nextLineHasChords || nextLineStartsWithUnchordedPhrase)
+              ) {
+                const totalSustainedRun = 1 + sustainedExtra;
+                const takeForCurrent = Math.max(1, Math.ceil(totalSustainedRun / 2));
+                compasesForThisLine += takeForCurrent - 1;
+              } else {
+                compasesForThisLine += sustainedExtra;
+              }
+            }
+          }
+
+          const isLastLine = lIdx === sec.lines.length - 1;
+          if (isLastLine && compasOffset + compasesForThisLine < secCompases.length) {
+            compasesForThisLine = secCompases.length - compasOffset;
+          }
         }
 
         const assignedCompases = secCompases.slice(compasOffset, compasOffset + compasesForThisLine);

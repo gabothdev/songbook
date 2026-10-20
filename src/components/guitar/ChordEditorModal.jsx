@@ -6,6 +6,7 @@ import GuitarChordDiagram from './GuitarChordDiagram';
 import { getNoteAt, CHROMATIC_INDEX } from '../../utils/musicEngine';
 import { getAllChordSuggestions } from '../../utils/chordNormalization';
 import { saveCustomChord } from '../../services/persistenceApi';
+import { calculateGuitarFingers } from '../../utils/guitarFingering';
 
 const GUITAR_OPEN_NOTES = [4, 9, 2, 7, 11, 4]; // E2, A2, D3, G3, B3, E4 semitones from C
 
@@ -86,11 +87,18 @@ export default function ChordEditorModal({
 
       const fretsArr = rawFretsArr.map(toDisplayFret);
 
-      const fingersArr = typeof initialFingers === 'string'
+      let fingersArr = typeof initialFingers === 'string'
         ? initialFingers.padStart(6, '0').split('')
         : Array.isArray(initialFingers)
         ? [...initialFingers]
-        : ['0', '3', '2', '0', '1', '0'];
+        : [];
+
+      // Si el acorde ya trae dedos definidos (al menos uno != '0'), respetarlos;
+      // si están vacíos o son todos '0', auto-calcular la digitación.
+      const hasDefinedFingers = fingersArr.some((f) => f && f !== '0');
+      if (!hasDefinedFingers) {
+        fingersArr = calculateGuitarFingers(fretsArr);
+      }
 
       setFrets(fretsArr);
       setFingers(fingersArr);
@@ -140,6 +148,7 @@ export default function ChordEditorModal({
       const next = [...frets];
       next[index] = '';
       setFrets(next);
+      setFingers(calculateGuitarFingers(next));
       return;
     }
 
@@ -148,6 +157,7 @@ export default function ChordEditorModal({
       const next = [...frets];
       next[index] = 'x';
       setFrets(next);
+      setFingers(calculateGuitarFingers(next));
       return;
     }
 
@@ -167,6 +177,7 @@ export default function ChordEditorModal({
     const next = [...frets];
     next[index] = String(num);
     setFrets(next);
+    setFingers(calculateGuitarFingers(next));
   };
 
   const handleFingerChange = (index, val) => {

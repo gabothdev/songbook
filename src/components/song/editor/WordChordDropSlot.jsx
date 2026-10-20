@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, X, Scissors, Link2 } from 'lucide-react';
+import { Plus, X, Scissors, Link2, ChevronLeft, ChevronRight } from 'lucide-react';
 
 /**
  * WordChordDropSlot
@@ -22,6 +22,7 @@ export default function WordChordDropSlot({
   onDragLeave,
   onDrop,
   onAssignChord,
+  onNudgeChord = null,
   onOpenPicker,
   onUpdateWordText,
   onSplitWord,
@@ -151,7 +152,7 @@ export default function WordChordDropSlot({
             onDragStart={handleDragStartChord}
             onClick={handleChordBadgeClick}
             onDoubleClick={() => onOpenPicker({ secIdx, lineIdx, wordId: item.id })}
-            className={`inline-flex items-center gap-1 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs select-none cursor-pointer active:cursor-grabbing transition-all hover:scale-105 group/chord ${
+            className={`inline-flex items-center gap-0.5 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs select-none cursor-pointer active:cursor-grabbing transition-all hover:scale-105 hover:z-20 group/chord ${
               activeStampChord ? 'cursor-copy ring-2 ring-amber-500' : ''
             } ${
               isChordActive
@@ -163,9 +164,22 @@ export default function WordChordDropSlot({
             title={
               activeStampChord
                 ? `Clic para estampar [${activeStampChord}]`
-                : `Clic para ir al pulso en BeatGrid y video • Doble clic para cambiar • Arrastra para mover`
+                : `Clic para ir al pulso en BeatGrid y video • Doble clic para cambiar • Arrastra o usa ◀ ▶ para mover`
             }
           >
+            {onNudgeChord && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNudgeChord(secIdx, lineIdx, 'word', wordIdx, -1);
+                }}
+                className="hidden group-hover/chord:inline-flex items-center justify-center hover:text-amber-900 hover:bg-amber-400/50 rounded px-0.5 cursor-pointer"
+                title="Correr acorde una palabra/sílaba a la izquierda (◀)"
+              >
+                <ChevronLeft className="w-2.5 h-2.5" />
+              </button>
+            )}
             <span>{item.chord}</span>
             {isSectionSynced && (
               <span
@@ -173,13 +187,26 @@ export default function WordChordDropSlot({
                 title="Sincronizado"
               />
             )}
+            {onNudgeChord && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNudgeChord(secIdx, lineIdx, 'word', wordIdx, 1);
+                }}
+                className="hidden group-hover/chord:inline-flex items-center justify-center hover:text-amber-900 hover:bg-amber-400/50 rounded px-0.5 cursor-pointer"
+                title="Correr acorde una palabra/sílaba a la derecha (▶)"
+              >
+                <ChevronRight className="w-2.5 h-2.5" />
+              </button>
+            )}
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onAssignChord(secIdx, lineIdx, item.id, null);
               }}
-              className="opacity-0 group-hover/chord:opacity-100 hover:text-rose-700 cursor-pointer ml-0.5 p-0.2"
+              className="hidden group-hover/chord:inline-flex items-center justify-center hover:text-rose-700 cursor-pointer ml-0.5 p-0.2"
               title="Quitar acorde"
             >
               <X className="w-2.5 h-2.5" />

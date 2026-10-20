@@ -536,18 +536,29 @@ export default function SteppedSyncWizardModal({
                       const isActive = idx === engine.currentPhraseIndex;
                       const isLastRecorded = idx === engine.currentPhraseIndex - 1;
                       const recordedTime = isPast ? engine.allRecordedPhrases[idx]?.time : null;
+                      const meta = engine.phraseMetadata?.[idx];
+                      const showSectionBadge = idx === 0 || meta?.startsNewSection;
 
                       return (
-                        <div
-                          key={idx}
-                          data-active={isActive ? 'true' : undefined}
-                          className={`p-2.5 rounded-xl border transition-all text-xs font-serif flex items-center justify-between ${
-                            isActive
-                              ? 'bg-amber-100 border-amber-400 text-stone-950 font-bold shadow-sm ring-2 ring-amber-400/30 scale-[1.01]'
-                              : isPast
-                              ? 'bg-emerald-50/70 border-emerald-200 text-stone-700 opacity-90'
-                              : 'bg-stone-50/60 border-stone-200 text-stone-400'
-                          }`}
+                        <React.Fragment key={idx}>
+                          {showSectionBadge && meta?.sectionName && (
+                            <div className="pt-2 pb-0.5 px-1 flex items-center gap-2 select-none">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-200/80 border border-amber-400/60 text-amber-950 font-sans font-bold text-[10px] uppercase tracking-wider shadow-2xs">
+                                <Layers className="w-3 h-3 text-amber-800" />
+                                <span>[{meta.sectionName}]</span>
+                              </span>
+                              <div className="flex-1 border-b border-dashed border-amber-300/70" />
+                            </div>
+                          )}
+                          <div
+                            data-active={isActive ? 'true' : undefined}
+                            className={`p-2.5 rounded-xl border transition-all text-xs font-serif flex items-center justify-between ${
+                              isActive
+                                ? 'bg-amber-100 border-amber-400 text-stone-950 font-bold shadow-sm ring-2 ring-amber-400/30 scale-[1.01]'
+                                : isPast
+                                ? 'bg-emerald-50/70 border-emerald-200 text-stone-700 opacity-90'
+                                : 'bg-stone-50/60 border-stone-200 text-stone-400'
+                            }`}
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
                             <span
@@ -596,8 +607,9 @@ export default function SteppedSyncWizardModal({
                             )}
                           </div>
                         </div>
-                      );
-                    })}
+                      </React.Fragment>
+                    );
+                  })}
 
                     {engine.currentPhraseIndex >= engine.parsedPhrases.length && (
                       <div className="py-6 text-center space-y-2 bg-emerald-50 rounded-2xl border border-emerald-300 p-4">

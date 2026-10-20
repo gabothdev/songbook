@@ -91,11 +91,14 @@ Este archivo rige para el esquema `server/prisma/schema.prisma`, las rutas modul
 2. **Codificación de Trastes (Base36)**:
    - Las posiciones almacenan una cadena de 6 caracteres (uno por cuerda de 6ª a 1ª): `'x'` (mute), `'0'` (al aire), `'1'`..`'9'`, y letras en minúsculas en base36 (`'a'`=10, `'b'`=11, `'c'`=12... `'o'`=24) para trastes mayores o iguales a 10.
    - En el editor visual (`ChordEditorModal.jsx`), el músico visualiza e ingresa números decimales (0 a 24), transformándose de manera transparente al formato canónico base36 al guardar en la base de datos.
-3. **Orden de Búsqueda (`GET /chords/lookup`)**:
+3. **Cálculo Automático de Digitación (`guitarFingering.js`)**:
+   - En `ChordEditorModal.jsx`, los dedos se calculan automáticamente en tiempo real al modificar los trastes.
+   - Reglas: Dedo 1 (índice) va al traste menor más cercano al mástil (desempate por cuerda más grave). Cejilla con Dedo 1 reconocida cuando $\ge 2$ cuerdas comparten el traste menor (o $> 4$ cuerdas pisadas), siempre que no haya cuerdas al aire entre ellas ni hacia la 1ª cuerda. Los dedos 2, 3 y 4 se asignan secuencialmente por traste menor y cuerda grave.
+4. **Orden de Búsqueda (`GET /chords/lookup`)**:
    - Devuelve primero las variaciones del catálogo oficial (`ChordDefinition`) y luego las personalizadas (`CustomChord`).
-4. **Persistencia de Variaciones para Administradores**:
+5. **Persistencia de Variaciones para Administradores**:
    - Cuando un usuario con rol `ADMIN` edita o selecciona variantes de acordes para una canción, las variantes se guardan canónicamente en `Song.chordVariants` además de en su perfil `UserSongPreference`.
-5. **Promoción al Catálogo Oficial**:
+6. **Promoción al Catálogo Oficial**:
    - Los administradores pueden promover acordes de `CustomChord` al catálogo canónico `ChordDefinition` desde `DevDatabaseStudio`. Las posiciones se fusionan sin duplicar y el registro en `CustomChord` se elimina.
 
 ---

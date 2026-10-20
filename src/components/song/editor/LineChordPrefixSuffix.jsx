@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, ChevronLeft, ChevronRight } from 'lucide-react';
 
 /**
  * LinePrefixChords
@@ -16,6 +16,7 @@ export function LinePrefixChords({
   activeStampChord,
   onAddPrefixChord,
   onRemovePrefixChord,
+  onNudgeChord = null,
   onOpenPicker,
   onNavigateChord = null,
   isSectionSynced = false,
@@ -86,15 +87,28 @@ export function LinePrefixChords({
                   );
                   e.dataTransfer.setData('text/plain', item.chord);
                 }}
-                className={`inline-flex items-center gap-1 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs cursor-pointer active:cursor-grabbing transition-all hover:scale-105 ${
+                className={`inline-flex items-center gap-0.5 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs cursor-pointer active:cursor-grabbing transition-all hover:scale-105 hover:z-20 ${
                   isChordActive
                     ? 'bg-amber-500 text-amber-950 ring-2 ring-amber-600 shadow-md scale-110 z-10 font-black'
                     : isSectionSynced
                     ? 'text-amber-950 bg-amber-200/90 hover:bg-amber-300 border border-amber-400/80'
                     : 'text-stone-700 bg-stone-100 hover:bg-amber-100 border border-dashed border-stone-300 hover:border-amber-400'
                 }`}
-                title={`Clic para ir al pulso de [${item.chord}] en BeatGrid y video • Arrastra para mover`}
+                title={`Clic para ir al pulso de [${item.chord}] en BeatGrid y video • Arrastra o usa ◀ ▶ para mover`}
               >
+                {onNudgeChord && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onNudgeChord(secIdx, lineIdx, 'prefix', pIdx, -1);
+                    }}
+                    className="hidden group-hover/chord:inline-flex items-center justify-center hover:text-amber-900 hover:bg-amber-400/50 rounded px-0.5 cursor-pointer"
+                    title="Correr acorde a la izquierda (◀)"
+                  >
+                    <ChevronLeft className="w-2.5 h-2.5" />
+                  </button>
+                )}
                 <span>{item.chord}</span>
                 {isSectionSynced && (
                   <span
@@ -102,13 +116,26 @@ export function LinePrefixChords({
                     title="Sincronizado"
                   />
                 )}
+                {onNudgeChord && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onNudgeChord(secIdx, lineIdx, 'prefix', pIdx, 1);
+                    }}
+                    className="hidden group-hover/chord:inline-flex items-center justify-center hover:text-amber-900 hover:bg-amber-400/50 rounded px-0.5 cursor-pointer"
+                    title="Correr acorde hacia la letra (▶)"
+                  >
+                    <ChevronRight className="w-2.5 h-2.5" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     onRemovePrefixChord(secIdx, lineIdx, item.id);
                   }}
-                  className="opacity-0 group-hover/chord:opacity-100 hover:text-rose-700 cursor-pointer ml-0.5 p-0.2"
+                  className="hidden group-hover/chord:inline-flex items-center justify-center hover:text-rose-700 cursor-pointer ml-0.5 p-0.2"
                   title="Quitar acorde previo"
                 >
                   <X className="w-2.5 h-2.5" />
@@ -169,6 +196,7 @@ export function LineSuffixChords({
   activeStampChord,
   onAddSuffixChord,
   onRemoveSuffixChord,
+  onNudgeChord = null,
   onOpenPicker,
   onNavigateChord = null,
   isSectionSynced = false,
@@ -268,15 +296,28 @@ export function LineSuffixChords({
                   );
                   e.dataTransfer.setData('text/plain', item.chord);
                 }}
-                className={`inline-flex items-center gap-1 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs cursor-pointer active:cursor-grabbing transition-all hover:scale-105 ${
+                className={`inline-flex items-center gap-0.5 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs cursor-pointer active:cursor-grabbing transition-all hover:scale-105 hover:z-20 ${
                   isChordActive
                     ? 'bg-amber-500 text-amber-950 ring-2 ring-amber-600 shadow-md scale-110 z-10 font-black'
                     : isSectionSynced
                     ? 'text-amber-950 bg-amber-200/90 hover:bg-amber-300 border border-amber-400/80'
                     : 'text-stone-700 bg-stone-100 hover:bg-amber-100 border border-dashed border-stone-300 hover:border-amber-400'
                 }`}
-                title={`Clic para ir al pulso de [${item.chord}] en BeatGrid y video • Arrastra para mover`}
+                title={`Clic para ir al pulso de [${item.chord}] en BeatGrid y video • Arrastra o usa ◀ ▶ para mover`}
               >
+                {onNudgeChord && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onNudgeChord(secIdx, lineIdx, 'suffix', sIdx, -1);
+                    }}
+                    className="hidden group-hover/chord:inline-flex items-center justify-center hover:text-amber-900 hover:bg-amber-400/50 rounded px-0.5 cursor-pointer"
+                    title="Correr acorde hacia la última palabra (◀)"
+                  >
+                    <ChevronLeft className="w-2.5 h-2.5" />
+                  </button>
+                )}
                 <span>{item.chord}</span>
                 {isSectionSynced && (
                   <span
@@ -284,13 +325,26 @@ export function LineSuffixChords({
                     title="Sincronizado"
                   />
                 )}
+                {onNudgeChord && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onNudgeChord(secIdx, lineIdx, 'suffix', sIdx, 1);
+                    }}
+                    className="hidden group-hover/chord:inline-flex items-center justify-center hover:text-amber-900 hover:bg-amber-400/50 rounded px-0.5 cursor-pointer"
+                    title="Correr acorde a la derecha (▶)"
+                  >
+                    <ChevronRight className="w-2.5 h-2.5" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     onRemoveSuffixChord(secIdx, lineIdx, item.id);
                   }}
-                  className="opacity-0 group-hover/chord:opacity-100 hover:text-rose-700 cursor-pointer ml-0.5 p-0.2"
+                  className="hidden group-hover/chord:inline-flex items-center justify-center hover:text-rose-700 cursor-pointer ml-0.5 p-0.2"
                   title="Quitar acorde final"
                 >
                   <X className="w-2.5 h-2.5" />

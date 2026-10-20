@@ -88,50 +88,143 @@ export function buildChordTimeline(initialContent, bpm = 100, passedCompases = n
 }
 
 /**
+ * Splits a Spanish/Latin word into two natural syllable halves near its midpoint.
+ * Returns [part1, part2] if splittable, or null if the word is too short (< 4 core letters).
+ */
+export function splitWordIntoTwoSyllables(rawWord) {
+  if (!rawWord) return null;
+  const match = rawWord.match(/^([¡!¿?"'«(]*)(.*?)([.,;:!?"'»)]*)$/);
+  if (!match) return null;
+  const [, leadPunct, core, trailPunct] = match;
+  if (!core || core.length < 4) return null;
+
+  const isVowel = (ch) => /[aeiouáéíóúüAEIOUÁÉÍÓÚÜ]/.test(ch);
+  const inseparablePair = /^(?:bl|br|cl|cr|dr|fl|fr|gl|gr|pl|pr|tr|ch|ll|rr|qu|gu)$/i;
+
+  const breakCandidates = [];
+  for (let i = 2; i <= core.length - 2; i++) {
+    const prev = core[i - 1];
+    const curr = core[i];
+    const next = i + 1 < core.length ? core[i + 1] : '';
+
+    // V - CV (single consonant after vowel, except when starting an inseparable pair)
+    if (isVowel(prev) && !isVowel(curr)) {
+      const pair = curr + next;
+      if (isVowel(next) || inseparablePair.test(pair)) {
+        breakCandidates.push(i);
+      }
+    }
+    // VC - CV (between two consonants, unless the two consonants form an inseparable pair)
+    if (!isVowel(prev) && !isVowel(curr)) {
+      const pair = prev + curr;
+      if (!inseparablePair.test(pair)) {
+        breakCandidates.push(i);
+      }
+    }
+  }
+
+  const mid = core.length / 2;
+  let splitIdx = Math.round(mid);
+  if (breakCandidates.length > 0) {
+    splitIdx = breakCandidates.reduce((best, cand) =>
+      Math.abs(cand - mid) < Math.abs(best - mid) ? cand : best
+    );
+  }
+
+  if (splitIdx < 2 || splitIdx > core.length - 2) return null;
+  return [
+    `${leadPunct}${core.slice(0, splitIdx)}`,
+    `${core.slice(splitIdx)}${trailPunct}`,
+  ];
+}
+
+/**
  * Distributes chords uniformly across the words of a phrase.
- * First chord attaches directly to the 1st word: [C]Word.
- * Subsequent chords attach to words calculated by uniform spacing: Math.floor(words.length * i / N).
+ * - First chord attaches directly to the 1st word: [C]Word.
+ * - Subsequent chords attach to words calculated by uniform spacing: Math.floor(words.length * i / N).
+ * - If there are more chords than words, automatically splits the longest word(s) into syllables
+ *   (e.g. "[F#m]Comba[F#]tiendo [C#]al [F#m]capital.") and sends any remaining excess chords to suffixChords.
  */
 export function attachChordsToWords(phraseText, chords, suffixChords = []) {
   const cleanChords = (chords || []).filter((c) => c && c !== '𝄾' && c !== '𝄽');
   const cleanSuffix = (suffixChords || []).filter((c) => c && c !== '𝄾' && c !== '𝄽');
-  const suffixStr = cleanSuffix.length > 0 ? ' ' + cleanSuffix.map((c) => `[${c}]`).join(' ') : '';
 
-  if (cleanChords.length === 0) return `${phraseText.trim()}${suffixStr}`.trim();
-
-  const words = phraseText.trim().split(/\s+/).filter((w) => w.length > 0);
-  if (words.length === 0) {
-    return `${cleanChords.map((c) => `[${c}]`).join(' ')}${suffixStr}`.trim();
+  if (cleanChords.length === 0) {
+    const suffixStr = cleanSuffix.length > 0 ? ' ' + cleanSuffix.map((c) => `[${c}]`).join(' ') : '';
+    return `${phraseText.trim()}${suffixStr}`.trim();
   }
 
-  if (cleanChords.length === 1) {
-    return `[${cleanChords[0]}]${words[0]} ${words.slice(1).join(' ')}${suffixStr}`.trim();
+  const rawWords = phraseText.trim().split(/\s+/).filter((w) => w.length > 0);
+  if (rawWords.length === 0) {
+    const allChords = [...cleanChords, ...cleanSuffix];
+    return allChords.map((c) => `[${c}]`).join(' ').trim();
   }
+
+  // Build slot list; if cleanChords.length > slots.length, split the longest word(s) into syllables
+  const slots = rawWords.map((w) => ({ text: w, joinWithPrev: false, wasSplit: false }));
+
+  while (slots.length < cleanChords.length) {
+    let bestIdx = -1;
+    let bestLen = 0;
+    for (let i = 0; i < slots.length; i++) {
+      const coreLen = slots[i].text.replace(/[^a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]/g, '').length;
+      if (!slots[i].wasSplit && coreLen >= 4 && coreLen > bestLen) {
+        bestLen = coreLen;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx === -1) break;
+    const splitParts = splitWordIntoTwoSyllables(slots[bestIdx].text);
+    if (!splitParts) {
+      slots[bestIdx].wasSplit = true;
+      continue;
+    }
+    slots.splice(
+      bestIdx,
+      1,
+      { text: splitParts[0], joinWithPrev: slots[bestIdx].joinWithPrev, wasSplit: true },
+      { text: splitParts[1], joinWithPrev: true, wasSplit: true }
+    );
+  }
+
+  // Any chords still exceeding available slots go cleanly to suffixChords at the end of the line
+  const assignableChords = cleanChords.slice(0, slots.length);
+  const overflowChords = cleanChords.slice(slots.length);
+  const finalSuffix = [...overflowChords, ...cleanSuffix];
+  const suffixStr = finalSuffix.length > 0 ? ' ' + finalSuffix.map((c) => `[${c}]`).join(' ') : '';
 
   const wordChords = new Map();
-  wordChords.set(0, cleanChords[0]);
+  wordChords.set(0, assignableChords[0]);
 
-  for (let c = 1; c < cleanChords.length; c++) {
-    const targetIdx = Math.min(
-      words.length - 1,
-      Math.max(1, Math.floor((c * words.length) / cleanChords.length))
+  for (let c = 1; c < assignableChords.length; c++) {
+    let targetIdx = Math.min(
+      slots.length - 1,
+      Math.max(1, Math.floor((c * slots.length) / assignableChords.length))
     );
-    if (wordChords.has(targetIdx)) {
-      wordChords.set(targetIdx, `${wordChords.get(targetIdx)} [${cleanChords[c]}]`);
-    } else {
-      wordChords.set(targetIdx, cleanChords[c]);
+    // Avoid stacking two chords on the same slot: find the nearest free slot
+    while (wordChords.has(targetIdx) && targetIdx < slots.length - 1) {
+      targetIdx++;
     }
+    while (wordChords.has(targetIdx) && targetIdx > 0) {
+      targetIdx--;
+    }
+    wordChords.set(targetIdx, assignableChords[c]);
   }
 
-  const resultWords = words.map((w, idx) => {
-    if (wordChords.has(idx)) {
-      const ch = wordChords.get(idx);
-      return `[${ch}]${w}`;
+  let out = '';
+  slots.forEach((slot, idx) => {
+    const ch = wordChords.has(idx) ? `[${wordChords.get(idx)}]` : '';
+    const token = `${ch}${slot.text}`;
+    if (idx === 0) {
+      out += token;
+    } else if (slot.joinWithPrev) {
+      out += token;
+    } else {
+      out += ` ${token}`;
     }
-    return w;
   });
 
-  return `${resultWords.join(' ')}${suffixStr}`.trim();
+  return `${out}${suffixStr}`.trim();
 }
 
 /**
