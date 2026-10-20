@@ -9,6 +9,35 @@ import { saveCustomChord } from '../../services/persistenceApi';
 
 const GUITAR_OPEN_NOTES = [4, 9, 2, 7, 11, 4]; // E2, A2, D3, G3, B3, E4 semitones from C
 
+/**
+ * Convierte un traste almacenado (base36 o numérico) al valor visible para el usuario.
+ * Trastes 10..24 guardados como letras 'a'..'o' se muestran visualmente como "10".."24".
+ */
+export function toDisplayFret(fretChar) {
+  if (fretChar === null || fretChar === undefined || fretChar === '') return '';
+  const str = String(fretChar).trim();
+  if (str.toLowerCase() === 'x') return 'x';
+  if (str.length > 1) {
+    const num = parseInt(str, 10);
+    return isNaN(num) ? 'x' : String(num);
+  }
+  const num = parseInt(str, 36);
+  return isNaN(num) ? 'x' : String(num);
+}
+
+/**
+ * Convierte el valor visible ingresado por el usuario ("0".."24", "x") al formato de base de datos
+ * en base36 minúscula ('0'..'9', 'a'..'o', 'x').
+ */
+export function toStorageFret(fretVal) {
+  if (!fretVal || fretVal === '') return 'x';
+  const str = String(fretVal).trim().toLowerCase();
+  if (str === 'x') return 'x';
+  const num = parseInt(str, 10);
+  if (isNaN(num) || num < 0) return 'x';
+  return num.toString(36).toLowerCase();
+}
+
 function getNoteAtFret(stringIndex, fretStr) {
   if (!fretStr || fretStr.toLowerCase() === 'x') return '-';
   const fretNum = fretStr.length > 1 ? parseInt(fretStr, 10) : parseInt(fretStr, 36);
@@ -49,11 +78,13 @@ export default function ChordEditorModal({
       setChordName(initialChordName || 'C');
       setIsAutoName(true); // Siempre empieza activado por defecto
 
-      const fretsArr = typeof initialFrets === 'string'
+      const rawFretsArr = typeof initialFrets === 'string'
         ? initialFrets.padStart(6, 'x').split('')
         : Array.isArray(initialFrets)
         ? [...initialFrets]
         : ['x', '3', '2', '0', '1', '0'];
+
+      const fretsArr = rawFretsArr.map(toDisplayFret);
 
       const fingersArr = typeof initialFingers === 'string'
         ? initialFingers.padStart(6, '0').split('')
@@ -100,13 +131,41 @@ export default function ChordEditorModal({
 
   if (!isOpen || typeof document === 'undefined') return null;
 
-  const currentFretsStr = frets.map((f) => (f === '' ? 'x' : f)).join('');
+  const currentFretsStr = frets.map(toStorageFret).join('');
   const currentFingersStr = fingers.map((f) => (f === '' ? '0' : f)).join('');
 
   const handleFretChange = (index, val) => {
-    const clean = val.replace(/[^0-9xa-fA-F]/g, '');
+    const trimmed = val.trim();
+    if (trimmed === '') {
+      const next = [...frets];
+      next[index] = '';
+      setFrets(next);
+      return;
+    }
+
+    // Si el usuario escribió 'x' o 'X' al final o como único carácter
+    if (trimmed.toLowerCase().endsWith('x')) {
+      const next = [...frets];
+      next[index] = 'x';
+      setFrets(next);
+      return;
+    }
+
+    // Filtrar estrictamente solo números
+    const digitsOnly = trimmed.replace(/\D/g, '');
+    if (!digitsOnly) {
+      // Ignorar teclas que no sean dígitos ni 'x'
+      return;
+    }
+
+    let num = parseInt(digitsOnly, 10);
+    // Limitar o bloquear a un máximo de 24
+    if (num > 24) {
+      num = 24;
+    }
+
     const next = [...frets];
-    next[index] = clean === '' ? '' : clean.charAt(clean.length - 1);
+    next[index] = String(num);
     setFrets(next);
   };
 
@@ -137,17 +196,21 @@ export default function ChordEditorModal({
       });
 
       if (res) {
-        setToastMsg('¡Variación guardada con éxito!');
+        if (res.exists) {
+          setToastMsg(res.message || 'Esta variación ya existe en el catálogo y ha sido seleccionada.');
+        } else {
+          setToastMsg(res.message || '¡Variación guardada con éxito!');
+        }
         if (onSaveChord) {
-          onSaveChord(chordPayload);
+          onSaveChord(chordPayload, res);
         }
         setTimeout(() => {
           onClose();
-        }, 800);
+        }, 1200);
       } else {
         setToastMsg('Guardado localmente en esta sesión');
         if (onSaveChord) {
-          onSaveChord(chordPayload);
+          onSaveChord(chordPayload, null);
         }
         setTimeout(() => {
           onClose();
@@ -304,7 +367,7 @@ export default function ChordEditorModal({
                 <input
                   type="number"
                   min="1"
-                  max="19"
+                  max="24"
                   value={basePosition}
                   onChange={(e) => setBasePosition(Math.max(1, parseInt(e.target.value, 10) || 1))}
                   className="w-24 px-3 py-1.5 bg-white border border-stone-300 rounded-xl font-mono font-bold text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs"
@@ -327,7 +390,8 @@ export default function ChordEditorModal({
                         value={f}
                         onChange={(e) => handleFretChange(i, e.target.value)}
                         placeholder="x"
-                        className="w-full text-center py-1.5 bg-white border border-stone-300 rounded-lg font-mono font-bold text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs"
+                        maxLength={2}
+                        className="w-full text-center py-1.5 px-0.5 bg-white border border-stone-300 rounded-lg font-mono font-bold text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs"
                       />
                       <span className="text-[10px] font-mono font-bold text-amber-900">
                         {getNoteAtFret(i, f)}

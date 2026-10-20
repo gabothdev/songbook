@@ -11,6 +11,7 @@ import { config } from '../../config.js';
 import { searchCache, songCache, createCacheKey } from '../../utils/cache.js';
 import { useSearchHistory } from '../../hooks/useSearchHistory.js';
 import { extractUniqueChords } from '../../services/scraperApi.js';
+import { AlignLeft } from 'lucide-react';
 
 const API_BASE_URL = config.API_BASE_URL || '/api';
 
@@ -122,6 +123,39 @@ export default function SongSearchModal({ isOpen, onClose, onSongSelect }) {
         if (finalResults.ug.length > 0 || finalResults.cc.length > 0 || finalResults.chordify.length > 0) {
           searchCache.set(cacheKey, finalResults);
         }
+
+        // Verificación en segundo plano de letras para canciones de Chordify que aún no las tengan marcadas
+        const uncheckedIds = (Array.isArray(chordifyResults) ? chordifyResults : [])
+          .filter(item => !item.hasLyrics && item.youtubeId)
+          .map(item => item.youtubeId);
+
+        if (uncheckedIds.length > 0) {
+          fetch(`${API_BASE_URL}/songs/chordify/check-lyrics`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ youtubeIds: uncheckedIds }),
+            signal: controller.signal
+          })
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+              if (data?.results && !controller.signal.aborted) {
+                setResults(prev => {
+                  const updatedChordify = (prev.chordify || []).map(song => {
+                    if (data.results[song.youtubeId]) {
+                      return {
+                        ...song,
+                        hasLyrics: true,
+                        versions: (song.versions || []).map(v => ({ ...v, hasLyrics: true }))
+                      };
+                    }
+                    return song;
+                  });
+                  return { ...prev, chordify: updatedChordify };
+                });
+              }
+            })
+            .catch(() => {});
+        }
       } catch (ccError) {
         console.log('Error en fuentes secundarias:', ccError.message);
         if (initialResults.ug.length > 0) {
@@ -188,7 +222,12 @@ export default function SongSearchModal({ isOpen, onClose, onSongSelect }) {
         const response = await fetch(`${API_BASE_URL}/songs/transcribe/youtube`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ youtubeId, method: 'chordify' })
+          body: JSON.stringify({
+            youtubeId,
+            method: 'chordify',
+            title: songTitle,
+            artist: songArtist
+          })
         });
 
         if (!response.ok) {
@@ -438,7 +477,15 @@ const SongItem = ({ song, isExpanded, onToggleExpand, onSelectVersion }) => {
         }}
       >
         <div className="min-w-0 flex-1">
-          <h5 className="text-xs sm:text-sm font-serif font-black text-stone-900 truncate hover:text-amber-900">{song.title}</h5>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h5 className="text-xs sm:text-sm font-serif font-black text-stone-900 truncate hover:text-amber-900">{song.title}</h5>
+            {(song.hasLyrics || primaryVersion?.hasLyrics) && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-sans font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-xs">
+                <AlignLeft className="w-3 h-3 text-emerald-700" />
+                <span>Incluye letra</span>
+              </span>
+            )}
+          </div>
           <p className="text-xs font-sans font-medium text-stone-500 truncate">{song.artist}</p>
         </div>
         
@@ -476,7 +523,15 @@ const SongItem = ({ song, isExpanded, onToggleExpand, onSelectVersion }) => {
               onClick={() => onSelectVersion(version)}
               className="w-full text-left p-2 hover:bg-white rounded-lg flex items-center justify-between text-xs transition-colors cursor-pointer border border-transparent hover:border-amber-200"
             >
-              <span className="font-bold text-stone-800">{version.type || `Versión ${vIdx + 1}`}</span>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-stone-800">{version.type || `Versión ${vIdx + 1}`}</span>
+                {version.hasLyrics && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-sans font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    <AlignLeft className="w-2.5 h-2.5 text-emerald-700" />
+                    <span>Incluye letra</span>
+                  </span>
+                )}
+              </div>
               <StarRating rating={version.rating} votes={version.votes} />
             </button>
           ))}

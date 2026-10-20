@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react';
+import React, { useId, useState, useEffect, useMemo } from 'react';
 import { Disc, Music2, Sparkles } from 'lucide-react';
 import { parseImageFraming, reportBrokenImage } from '../../services/artworkService';
 
@@ -24,10 +24,25 @@ export default function AlbumDiscCase({
   const linGradGlare = useId();
   const [isHovered, setIsHovered] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [triedProxy, setTriedProxy] = useState(false);
 
   const framing = parseImageFraming(albumCover);
   const actualUrl = framing.url;
-  const hasCover = Boolean(actualUrl) && !imageError;
+
+  useEffect(() => {
+    setImageError(false);
+    setTriedProxy(false);
+  }, [actualUrl]);
+
+  const displayUrl = useMemo(() => {
+    if (!actualUrl) return null;
+    if (triedProxy) {
+      return `/api/artwork/proxy?url=${encodeURIComponent(actualUrl)}`;
+    }
+    return actualUrl;
+  }, [actualUrl, triedProxy]);
+
+  const hasCover = Boolean(displayUrl) && !imageError;
 
   return (
     <div
@@ -120,7 +135,8 @@ export default function AlbumDiscCase({
             {hasCover ? (
               <image
                 id="photo-disc"
-                href={actualUrl}
+                href={displayUrl}
+                referrerPolicy="no-referrer"
                 x={-47.2 + (framing.x || 0)}
                 y={35.1 + (framing.y || 0)}
                 width={1096.4 * (framing.zoom || 1)}
@@ -128,13 +144,17 @@ export default function AlbumDiscCase({
                 preserveAspectRatio="xMidYMid slice"
                 clipPath={`url(#${cdClipId})`}
                 onError={() => {
-                  setImageError(true);
-                  reportBrokenImage({
-                    type: 'album',
-                    name: artistName,
-                    songTitle,
-                    url: actualUrl,
-                  });
+                  if (!triedProxy && actualUrl && !actualUrl.startsWith('data:')) {
+                    setTriedProxy(true);
+                  } else {
+                    setImageError(true);
+                    reportBrokenImage({
+                      type: 'album',
+                      name: artistName,
+                      songTitle,
+                      url: actualUrl,
+                    });
+                  }
                 }}
               />
             ) : (

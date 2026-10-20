@@ -1,12 +1,28 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { PUPPETEER_ARGS, getChromeExecutablePath } from '../config/puppeteer.js';
-import axios from 'axios';
+import { searchYouTubeMusic } from './youtube.js';
+import prisma from './db.js';
+import {
+  parseChordifyMeasuresAndLyrics,
+  normalizeChord,
+  sanitizeLyricLineSegments,
+  buildRawLyricSegments,
+} from './chordify/measureParser.js';
 
 puppeteer.use(StealthPlugin());
 
-export async function getChordifyBeatGrid(youtubeId) {
-  console.log(`[Chordify Scraper] Iniciando scraping para youtubeId: ${youtubeId}`);
+// Re-export helpers from measureParser for backward compatibility
+export { normalizeChord, sanitizeLyricLineSegments, buildRawLyricSegments };
+
+export async function getChordifyBeatGrid(youtubeId, fallbackTitle = null, fallbackArtist = null, options = {}) {
+  const {
+    captureScreenshots = false,
+    includeRawData = false,
+    skipCacheSave = false,
+  } = options;
+
+  console.log(`[Chordify Scraper] Iniciando scraping para youtubeId: ${youtubeId} (screenshots=${captureScreenshots})`);
   const chromePath = getChromeExecutablePath();
   const browser = await puppeteer.launch({
     headless: false,
@@ -14,306 +30,296 @@ export async function getChordifyBeatGrid(youtubeId) {
     args: [
       ...PUPPETEER_ARGS,
       '--window-position=-2400,-2400',
-      '--window-size=1280,800'
-    ]
+      '--window-size=1366,900',
+    ],
   });
-  
+
   const page = await browser.newPage();
-  
+  await page.setViewport({ width: 1366, height: 900 });
+
   const url = `https://chordify.net/chords/youtube:${youtubeId}`;
   console.log(`[Chordify Scraper] Navegando a: ${url}`);
-  
+
   try {
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const status = response.status();
-    
+
     if (status >= 400) {
       throw new Error(`Chordify retornó código de estado ${status}`);
     }
-    
+
     // Esperar a que el script de hidratación se cargue en el DOM
-    await page.waitForFunction(() => {
-      const scripts = Array.from(document.querySelectorAll('script'));
-      return scripts.some(s => s.textContent?.includes('window.__staticRouterHydrationData'));
-    }, { timeout: 15000 });
-    
+    await page.waitForFunction(
+      () => {
+        const scripts = Array.from(document.querySelectorAll('script'));
+        return scripts.some((s) => s.textContent?.includes('window.__staticRouterHydrationData'));
+      },
+      { timeout: 15000 }
+    );
+
     const dataStr = await page.evaluate(() => {
       const scripts = Array.from(document.querySelectorAll('script'));
-      const target = scripts.find(s => s.textContent?.includes('window.__staticRouterHydrationData'));
+      const target = scripts.find((s) => s.textContent?.includes('window.__staticRouterHydrationData'));
       if (!target) return null;
-      
+
       const content = target.textContent || '';
       const match = content.match(/window\.__staticRouterHydrationData\s*=\s*JSON\.parse\((.*)\);/);
       return match ? match[1] : null;
     });
-    
+
     if (!dataStr) {
       throw new Error('No se pudo encontrar window.__staticRouterHydrationData en la página.');
     }
-    
+
     const jsonStr = JSON.parse(dataStr);
     const hydrationData = JSON.parse(jsonStr);
-    
+
     const keys = Object.keys(hydrationData.loaderData);
     const loaderKey = keys[0];
     const chordsData = hydrationData.loaderData[loaderKey];
-    
+
     if (!chordsData || !chordsData.chords || chordsData.chords._type === 'Failure') {
       throw new Error('Chordify no tiene acordes disponibles para este video.');
     }
-    
-    const chordsObj = chordsData.chords.value;
-    let songTitle = chordsData.title || chordsObj.title || chordsData.meta?.title || chordsData.track?.title || null;
-    let songArtist = chordsData.artist || chordsObj.artist || chordsData.meta?.artist || chordsData.track?.artist || null;
 
-    if (!songTitle || !songArtist) {
+    // Infer title fallback from <title> if missing
+    let pageTitleFallback = fallbackTitle;
+    if (!pageTitleFallback) {
       try {
         const rawTitle = await page.title();
-        const cleaned = rawTitle.replace(/\s+(?:Chords|Acordes)\s*-\s*Chordify$/i, '').trim();
-        if (cleaned.includes(' - ')) {
-          const parts = cleaned.split(' - ');
-          if (!songArtist) songArtist = parts[0].trim();
-          if (!songTitle) songTitle = parts.slice(1).join(' - ').trim();
-        } else if (!songTitle) {
-          songTitle = cleaned;
+        const cleaned = rawTitle
+          .replace(/\s+(?:Chords\s*&\s*Lyrics|Chords|Acordes)\s*(?:by.*?)?(?:-\s*Chordify|\|\s*Chordify)?$/i, '')
+          .trim();
+        if (cleaned && !/^chordify$/i.test(cleaned)) {
+          pageTitleFallback = cleaned;
         }
       } catch (titleErr) {
         console.warn('[Chordify Scraper] No se pudo inferir título desde el tag <title>:', titleErr.message);
       }
     }
 
-    const bpm = chordsObj.chordInfo.derivedBpm || 120;
-    const key = chordsObj.chordInfo.derivedKey || 'C:maj';
-    const barLength = chordsObj.barLength || chordsObj.chordInfo.barLength || 4;
-    const chordsStr = chordsObj.chords;
-    
-    if (!chordsStr) {
-      throw new Error('La cadena de acordes de Chordify está vacía.');
-    }
-    
-    // Parsear la cadena de acordes
-    const lines = chordsStr.split('\n').filter(l => l.trim() !== '');
-    const beats = lines.map(line => {
-      const parts = line.split(';');
-      return {
-        beatNum: parseInt(parts[0], 10),
-        chord: normalizeChord(parts[1] || 'N'),
-        startTime: parseFloat(parts[2] || '0'),
-        endTime: parseFloat(parts[3] || '0')
-      };
+    // Pure musical and measure parsing decoupled to measureParser
+    const parsed = parseChordifyMeasuresAndLyrics(chordsData, {
+      fallbackTitle: pageTitleFallback,
+      fallbackArtist,
     });
-    
-    // Agrupar en compases preservando compases de anacrusa/intro (ej. 2 tiempos) y agrupando acordes en 4/4
-    const firstChordIdx = beats.findIndex((b) => b.chord !== '𝄾' && b.chord !== '𝄽');
-    const rawMeasures = [];
 
-    if (firstChordIdx > 0) {
-      // Tomar los silencios previos al primer acorde (hasta barLength tiempos) como compás de intro
-      const firstBarIdx = beats.findIndex((b) => b.beatNum === 1);
-      const introStart = (firstBarIdx !== -1 && firstBarIdx < firstChordIdx)
-        ? firstBarIdx
-        : Math.max(0, firstChordIdx - 2);
+    const hasLyrics = parsed.hasLyrics;
 
-      const introBeats = beats.slice(introStart, firstChordIdx);
-      if (introBeats.length > 0) {
-        rawMeasures.push(introBeats);
-      }
-
-      // Desde el primer acorde en adelante, agrupar de a barLength (4 tiempos)
-      const songBeats = beats.slice(firstChordIdx);
-      for (let i = 0; i < songBeats.length; i += barLength) {
-        rawMeasures.push(songBeats.slice(i, i + barLength));
-      }
-    } else {
-      for (let i = 0; i < beats.length; i += barLength) {
-        rawMeasures.push(beats.slice(i, i + barLength));
-      }
-    }
-
-    const hasIntro = rawMeasures.length > 0 && rawMeasures[0].every(b => b.chord === '𝄾' || b.chord === '𝄽');
-    const compases = rawMeasures.map((measureBeats, mIdx) => {
-      const acordes = measureBeats.map((b) => b.chord);
-      const beatTimes = measureBeats.map((b) => b.startTime);
-      const id = mIdx + 1;
-
-      let seccion = '';
-      let isSecStart = false;
-
-      if (hasIntro && mIdx === 0) {
-        seccion = 'Intro';
-        isSecStart = true;
-      } else {
-        const songMeasureIdx = hasIntro ? mIdx - 1 : mIdx;
-        const secIdx = Math.floor(songMeasureIdx / 8) + 1;
-        seccion = `Estrofa ${secIdx}`;
-        isSecStart = songMeasureIdx % 8 === 0;
-      }
-
-      const secTime = isSecStart && measureBeats[0] ? measureBeats[0].startTime : null;
-
-      return {
-        id,
-        acordes,
-        beatTimes,
-        seccion,
-        ...(secTime !== null ? { secTime } : {})
-      };
-    });
-    
-    // Reconstruir leadSheet si existe
-    let leadSheetText = null;
-    const leadSheet = chordsData.leadSheet;
-    if (leadSheet && leadSheet.data && leadSheet.data.value) {
+    // Capturas de pantalla opcionales (Chords Grid + Lyrics View)
+    let screenshots = null;
+    if (captureScreenshots) {
+      screenshots = { chordsView: null, lyricsView: null };
       try {
-        const sections = leadSheet.data.value;
-        let textOutput = '';
-        
-        sections.forEach(section => {
-          const title = section.title || 'Sección';
-          const firstContent = section.content && section.content[0];
-          const secTimeSec = firstContent ? (firstContent.start / 1000).toFixed(1) : '0.0';
-          
-          textOutput += `\n[${title} @ ${secTimeSec}]\n`;
-          
-          if (section.content) {
-            section.content.forEach(c => {
-              if (c.line && c.line.lyricLine) {
-                const lyrics = c.line.lyricLine.lyrics || '';
-                const chordsList = c.line.lyricLine.chords || [];
-                
-                let lineText = '';
-                let lyricIndex = 0;
-                
-                chordsList.forEach(item => {
-                  if (item.chord) {
-                    lineText += `[${normalizeChord(item.chord)}]`;
-                  } else if (item.step !== undefined) {
-                    const stepVal = item.step;
-                    lineText += lyrics.substring(lyricIndex, lyricIndex + stepVal);
-                    lyricIndex += stepVal;
-                  }
-                });
-                
-                if (lyricIndex < lyrics.length) {
-                  lineText += lyrics.substring(lyricIndex);
-                }
-                
-                textOutput += lineText + '\n';
-              }
+        // Limpiar banners de cookies, modales y overlays molestos
+        await page.evaluate(() => {
+          const selectorsToHide = [
+            '#CybotCookiebotDialog',
+            '[id*="cookie"]',
+            '[class*="cookie"]',
+            '[class*="consent"]',
+            '[role="dialog"]',
+            '[class*="modal"]',
+            '[class*="Popup"]',
+            '[class*="Banner"]',
+          ];
+          selectorsToHide.forEach((sel) => {
+            document.querySelectorAll(sel).forEach((el) => {
+              el.style.display = 'none';
             });
-          }
+          });
         });
-        
-        leadSheetText = textOutput.trim();
-      } catch (err) {
-        console.warn('[Chordify Scraper] Error al reconstruir leadSheet:', err.message);
+
+        await new Promise((r) => setTimeout(r, 800));
+
+        // 1. Captura de la vista por defecto (Chords / Diagramas)
+        const chordsBase64 = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 82 });
+        screenshots.chordsView = `data:image/jpeg;base64,${chordsBase64}`;
+
+        // 2. Intentar cambiar a la pestaña de Lyrics / LeadSheet si existe
+        if (hasLyrics) {
+          const clickedLyrics = await page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll('button, a, [role="tab"]'));
+            const lyricsBtn = buttons.find((b) => {
+              const txt = (b.textContent || '').trim().toLowerCase();
+              return txt === 'lyrics' || txt === 'letra' || txt === 'letras' || txt.includes('lyrics') || txt.includes('chords & lyrics');
+            });
+            if (lyricsBtn) {
+              lyricsBtn.click();
+              return true;
+            }
+            return false;
+          });
+
+          if (clickedLyrics) {
+            await new Promise((r) => setTimeout(r, 900));
+            const lyricsBase64 = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 82 });
+            screenshots.lyricsView = `data:image/jpeg;base64,${lyricsBase64}`;
+          }
+        }
+      } catch (shotErr) {
+        console.warn('[Chordify Scraper] Error al tomar capturas de referencia:', shotErr.message);
       }
     }
-    
+
+    // Guardar en la caché persistente de SQLite para que futuras búsquedas lo reconozcan al instante
+    if (!skipCacheSave) {
+      try {
+        await prisma.chordifyCache.upsert({
+          where: { youtubeId },
+          update: {
+            hasLyrics,
+            lyricsType: chordsData.lyricsType || (hasLyrics ? 'synced' : null),
+            title: parsed.songTitle,
+            artist: parsed.songArtist,
+            bpm: Number(parsed.bpm) || null,
+            leadSheetText: parsed.leadSheetText || null,
+          },
+          create: {
+            youtubeId,
+            hasLyrics,
+            lyricsType: chordsData.lyricsType || (hasLyrics ? 'synced' : null),
+            title: parsed.songTitle,
+            artist: parsed.songArtist,
+            bpm: Number(parsed.bpm) || null,
+            leadSheetText: parsed.leadSheetText || null,
+          },
+        });
+      } catch (cacheErr) {
+        console.warn('[Chordify Scraper] Error al guardar en ChordifyCache:', cacheErr.message);
+      }
+    }
+
     return {
-      title: songTitle,
-      artist: songArtist,
-      bpm,
-      key: normalizeChord(key),
-      compases,
-      barLength,
-      ...(leadSheetText ? { leadSheetText } : {})
+      youtubeId,
+      chordifyUrl: url,
+      title: parsed.songTitle,
+      artist: parsed.songArtist,
+      bpm: parsed.bpm,
+      rawKey: parsed.key,
+      key: parsed.normalizedKey,
+      compases: parsed.compases,
+      barLength: parsed.barLength,
+      hasLyrics,
+      lyricsType: chordsData.lyricsType || (hasLyrics ? 'synced' : null),
+      ...(parsed.leadSheetText ? { leadSheetText: parsed.leadSheetText } : {}),
+      ...(screenshots ? { screenshots } : {}),
+      ...(includeRawData
+        ? {
+            rawDiagnostics: {
+              ...parsed.diagnostics,
+              chordsDataKeys: Object.keys(chordsData || {}),
+              chordsObjKeys: Object.keys(chordsData.chords?.value || {}),
+              rawLyricsObj: chordsData.lyrics || chordsData.chords?.value?.lyrics || null,
+              chordInfo: chordsData.chords?.value?.chordInfo || {},
+              beatsSample: parsed.diagnostics.beats.slice(0, 64),
+              allBeats: parsed.diagnostics.beats,
+            },
+          }
+        : {}),
     };
-    
   } finally {
     await browser.close();
     console.log('[Chordify Scraper] Browser cerrado.');
   }
 }
 
-function normalizeChord(chord) {
-  if (!chord || chord === 'N' || chord === 'none') return '𝄾';
-  let c = chord.trim();
-
-  // 1. Colon replacements from Chordify (e.g. E:maj -> E, E:min -> Em, E:maj7 -> Emaj7)
-  c = c
-    .replace(/:min/gi, 'm')
-    .replace(/:maj(?=\/|$)/gi, '')
-    .replace(/:maj/gi, 'maj')
-    .replace(/:/g, '');
-
-  // 2. Pure major triad simplification (e.g. Emaj/Ab -> E/Ab, Emaj -> E, while preserving Emaj7, Emaj9)
-  c = c.replace(/^([A-G][b#]?)maj(?!\d)(\/[A-G][b#]?)?$/i, (match, root, bass) => {
-    return `${root}${bass || ''}`;
-  });
-
-  c = c.replace(/^([A-G][b#]?)major(?!\d)(\/[A-G][b#]?)?$/i, (match, root, bass) => {
-    return `${root}${bass || ''}`;
-  });
-
-  return c;
-}
-
-// Buscar todas las ocurrencias de una clave de forma recursiva en JSON de YT
-function findKeysRecursive(obj, targetKey, results = []) {
-  if (!obj || typeof obj !== 'object') return results;
-  
-  if (obj[targetKey] !== undefined) {
-    results.push(obj[targetKey]);
-  }
-  
-  for (const key of Object.keys(obj)) {
-    if (typeof obj[key] === 'object') {
-      findKeysRecursive(obj[key], targetKey, results);
-    }
-  }
-  
-  return results;
-}
-
 export async function searchSongsOnChordify(query, signal) {
-  console.log(`[Chordify Scraper] Buscando en YouTube para Chordify: "${query}"`);
-  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-  
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-  };
-  
+  console.log(`[Chordify Scraper] Buscando canciones filtradas para Chordify: "${query}"`);
   try {
-    const { data: html } = await axios.get(url, { headers, signal, timeout: 10000 });
-    
-    const match = html.match(/ytInitialData\s*=\s*({[\s\S]*?});/);
-    if (!match) {
-      console.warn('[Chordify Scraper] No se pudo encontrar ytInitialData en el HTML de YouTube.');
-      return [];
+    const candidates = await searchYouTubeMusic(query, { signal, maxResults: 15 });
+
+    const candidateIds = candidates.map((item) => item.videoId).filter(Boolean);
+    const hasLyricsMap = new Map();
+
+    if (candidateIds.length > 0) {
+      try {
+        const [cachedChordify, cachedSongs] = await Promise.all([
+          prisma.chordifyCache.findMany({
+            where: { youtubeId: { in: candidateIds } },
+            select: { youtubeId: true, hasLyrics: true },
+          }),
+          prisma.song.findMany({
+            where: { youtubeId: { in: candidateIds } },
+            select: { youtubeId: true, content: true, isInstrumental: true },
+          }),
+        ]);
+
+        for (const c of cachedChordify) {
+          if (c.hasLyrics) hasLyricsMap.set(c.youtubeId, true);
+        }
+        for (const s of cachedSongs) {
+          if (s.content && !s.isInstrumental) hasLyricsMap.set(s.youtubeId, true);
+        }
+      } catch (dbErr) {
+        console.warn('[Chordify Scraper] Error al consultar caché de letras:', dbErr.message);
+      }
     }
-    
-    const jsonStr = match[1];
-    const data = JSON.parse(jsonStr);
-    
-    const videoRenderers = findKeysRecursive(data, 'videoRenderer');
-    const results = [];
-    
-    for (const video of videoRenderers) {
-      const videoId = video.videoId;
-      const title = video.title?.runs?.[0]?.text || video.title?.simpleText || '';
-      const artist = video.ownerText?.runs?.[0]?.text || video.shortBylineText?.runs?.[0]?.text || 'Artista Desconocido';
-      
-      if (videoId && title) {
-        results.push({
-          title,
-          artist,
-          versions: [{
-            url: `https://chordify.net/chords/youtube:${videoId}`,
+
+    return candidates.map((item) => {
+      const hasLyrics = Boolean(hasLyricsMap.get(item.videoId));
+      return {
+        title: item.title,
+        artist: item.artist,
+        youtubeId: item.videoId,
+        duration: item.duration,
+        hasLyrics,
+        versions: [
+          {
+            url: `https://chordify.net/chords/youtube:${item.videoId}`,
             rating: null,
             votes: 0,
             source: 'Chordify',
-            type: 'Chordify'
-          }]
-        });
-      }
-    }
-    
-    return results.slice(0, 15);
+            type: 'Chordify',
+            hasLyrics,
+          },
+        ],
+      };
+    });
   } catch (error) {
     if (error.name === 'AbortError') throw error;
     console.error('[Chordify Scraper] Error al buscar canciones:', error.message);
     return [];
   }
+}
+
+export async function checkChordifyLyrics(youtubeIds = []) {
+  if (!Array.isArray(youtubeIds) || youtubeIds.length === 0) return {};
+  const results = {};
+
+  try {
+    const [cachedChordify, cachedSongs] = await Promise.all([
+      prisma.chordifyCache.findMany({
+        where: { youtubeId: { in: youtubeIds } },
+        select: { youtubeId: true, hasLyrics: true },
+      }),
+      prisma.song.findMany({
+        where: { youtubeId: { in: youtubeIds } },
+        select: { youtubeId: true, content: true, isInstrumental: true },
+      }),
+    ]);
+
+    for (const c of cachedChordify) {
+      results[c.youtubeId] = c.hasLyrics;
+    }
+    for (const s of cachedSongs) {
+      if (s.content && !s.isInstrumental) results[s.youtubeId] = true;
+    }
+
+    const uncachedIds = youtubeIds.filter((id) => results[id] === undefined);
+    if (uncachedIds.length > 0) {
+      const topId = uncachedIds[0];
+      try {
+        console.log(`[Chordify Scraper] Verificando en background candidato no cacheado: ${topId}`);
+        const scraped = await getChordifyBeatGrid(topId);
+        results[topId] = Boolean(scraped.leadSheetText);
+      } catch (err) {
+        console.warn(`[Chordify Scraper] Falló chequeo en background para ${topId}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.warn('[Chordify Scraper] Error en checkChordifyLyrics:', err.message);
+  }
+
+  return results;
 }

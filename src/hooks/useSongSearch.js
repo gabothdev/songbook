@@ -17,6 +17,7 @@ export function useSongSearch({
   isOpen,
   databaseSongs = [],
   isPro = false,
+  isAdmin = false,
   onSongSelect,
   onScoreSelect,
   onDirectPlaySong,
@@ -32,12 +33,13 @@ export function useSongSearch({
   const [expandedIndex, setExpandedIndex] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(null);
   const [importProgress, setImportProgress] = useState(null);
+  const [curatingSong, setCuratingSong] = useState(null);
   const [internalDbSongs, setInternalDbSongs] = useState([]);
   const abortControllerRef = useRef(null);
 
-  // Cargar canciones de la base de datos si no vinieron por props
+  // Cargar siempre el catálogo completo oficial de la base de datos al abrir el modal
   useEffect(() => {
-    if (isOpen && (!databaseSongs || databaseSongs.length === 0)) {
+    if (isOpen) {
       fetchSavedSongs()
         .then((songs) => {
           if (Array.isArray(songs) && songs.length > 0) {
@@ -46,9 +48,20 @@ export function useSongSearch({
         })
         .catch(() => {});
     }
-  }, [isOpen, databaseSongs]);
+  }, [isOpen]);
 
-  const allDbSongs = databaseSongs && databaseSongs.length > 0 ? databaseSongs : internalDbSongs;
+  // Si tenemos el catálogo interno completo de la base de datos, lo usamos y fusionamos
+  const allDbSongs = useMemo(() => {
+    const list = internalDbSongs && internalDbSongs.length > 0 ? internalDbSongs : (databaseSongs || []);
+    const map = new Map();
+    list.forEach((s) => {
+      if (s?.id) map.set(String(s.id), s);
+    });
+    (databaseSongs || []).forEach((s) => {
+      if (s?.id && !map.has(String(s.id))) map.set(String(s.id), s);
+    });
+    return Array.from(map.values());
+  }, [internalDbSongs, databaseSongs]);
 
   // Filtrado reactivo de canciones de nuestra base de datos (Prioridad número 1)
   const trimmedLower = query.trim().toLowerCase();
@@ -87,7 +100,8 @@ export function useSongSearch({
     const trimmedQuery = searchQuery.trim();
     if (!trimmedQuery) return;
 
-    if (!isPro) {
+    const canSearchOnline = isAdmin;
+    if (!canSearchOnline) {
       setIsLoading(false);
       return;
     }
@@ -167,6 +181,38 @@ export function useSongSearch({
       if (finalResults.chordify.length > 0 || finalResults.ug.length > 0 || finalResults.cc.length > 0) {
         searchCache.set(cacheKey, finalResults);
       }
+
+      // Verificación en segundo plano de letras para canciones de Chordify
+      const chordifyVideos = (finalResults.chordify || []).map((s) => s.youtubeId).filter(Boolean);
+      if (chordifyVideos.length > 0) {
+        fetch(`${API_BASE_URL}/songs/chordify/check-lyrics`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ youtubeIds: chordifyVideos }),
+          signal: controller.signal,
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (data?.results && !controller.signal.aborted) {
+              setResults((prev) => {
+                const updatedChordify = (prev.chordify || []).map((song) => {
+                  if (data.results[song.youtubeId]) {
+                    return {
+                      ...song,
+                      hasLyrics: true,
+                      versions: (song.versions || []).map((v) => ({ ...v, hasLyrics: true })),
+                    };
+                  }
+                  return song;
+                });
+                const updatedResults = { ...prev, chordify: updatedChordify };
+                searchCache.set(cacheKey, updatedResults);
+                return updatedResults;
+              });
+            }
+          })
+          .catch(() => {});
+      }
     } catch (err) {
       if (err.name === 'AbortError') return;
       setError('Error al conectar con el servidor.');
@@ -181,8 +227,7 @@ export function useSongSearch({
   const handleSelectSong = useCallback(async (version, songData = null) => {
     if (!version || !version.url) return;
 
-    if (!isPro) {
-      if (openUpgradeModal) openUpgradeModal();
+    if (!isAdmin) {
       return;
     }
 
@@ -200,6 +245,15 @@ export function useSongSearch({
 
     if (songCache.has(cacheKey)) {
       const cached = songCache.get(cacheKey);
+      if (isAdmin) {
+        setCuratingSong({
+          content: typeof cached === 'string' ? cached : cached.content,
+          title: songTitle,
+          artist: songArtist,
+          ...(source === 'Chordify' && typeof cached === 'object' ? { youtubeId: cached.youtubeId, compases: cached.compases } : {})
+        });
+        return;
+      }
       if (onSongSelect) {
         onSongSelect({
           content: typeof cached === 'string' ? cached : cached.content,
@@ -263,7 +317,12 @@ export function useSongSearch({
         const response = await fetch(`${API_BASE_URL}/songs/transcribe/youtube`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ youtubeId, method: 'chordify' })
+          body: JSON.stringify({
+            youtubeId,
+            method: 'chordify',
+            title: songTitle,
+            artist: songArtist
+          })
         });
 
         if (!response.ok) {
@@ -289,14 +348,27 @@ export function useSongSearch({
         const cachedObj = { content: data.text, youtubeId, compases: data.compases };
         songCache.set(cacheKey, cachedObj);
 
-        if (onSongSelect) {
-          onSongSelect({
+        if (isAdmin) {
+          setCuratingSong({
+            id: data.id || undefined,
             content: data.text,
             title: songData ? songData.title : (data.title || 'Canción'),
             artist: songData ? songData.artist : (data.artist || 'Artista'),
             youtubeId: youtubeId,
-            compases: data.compases
+            compases: data.compases,
+            syncData: data.compases ? JSON.stringify(data.compases) : null,
           });
+        } else {
+          if (onSongSelect) {
+            onSongSelect({
+              content: data.text,
+              title: songData ? songData.title : (data.title || 'Canción'),
+              artist: songData ? songData.artist : (data.artist || 'Artista'),
+              youtubeId: youtubeId,
+              compases: data.compases
+            });
+          }
+          if (onClose) onClose();
         }
       } else {
         setImportProgress(prev => prev ? {
@@ -331,22 +403,31 @@ export function useSongSearch({
 
         songCache.set(cacheKey, data.content);
 
-        if (onSongSelect) {
-          onSongSelect({
+        if (isAdmin) {
+          setCuratingSong({
             content: data.content,
             title: songTitle,
-            artist: songArtist
+            artist: songArtist,
+            youtubeId: '',
           });
+        } else {
+          if (onSongSelect) {
+            onSongSelect({
+              content: data.content,
+              title: songTitle,
+              artist: songArtist
+            });
+          }
+          if (onClose) onClose();
         }
       }
-      if (onClose) onClose();
     } catch (err) {
       setError(err.message);
     } finally {
       setIsLoading(false);
       setImportProgress(null);
     }
-  }, [onSongSelect, onClose, isPro, openUpgradeModal]);
+  }, [onSongSelect, onClose, isAdmin, isPro, openUpgradeModal]);
 
   const handleSelectScoreItem = useCallback((score) => {
     if (!isPro) {
@@ -385,6 +466,7 @@ export function useSongSearch({
       setIsLoading(false);
       setExpandedIndex(null);
       setSelectedIndex(null);
+      setCuratingSong(null);
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -405,6 +487,8 @@ export function useSongSearch({
     selectedIndex,
     setSelectedIndex,
     importProgress,
+    curatingSong,
+    setCuratingSong,
     matchingDatabaseSongs,
     handleSearch,
     handleSelectSong,

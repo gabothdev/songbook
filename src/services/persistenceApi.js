@@ -97,7 +97,7 @@ export async function restoreOriginalSong({ id, title, artist, user, userId }) {
  */
 export async function updateSongPreferences({ 
   id, title, artist, content, youtubeId, syncData, transpose, chordVariants, artistImage, albumCover,
-  album, releaseYear, versionType, versionDetails, user, userId, isCustom 
+  album, releaseYear, versionType, versionDetails, user, userId, isCustom, genre 
 }) {
   try {
     const res = await fetch(`${BASE_URL}/songs/preferences`, {
@@ -105,7 +105,7 @@ export async function updateSongPreferences({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         id, title, artist, content, youtubeId, syncData, transpose, chordVariants, artistImage, albumCover,
-        album, releaseYear, versionType, versionDetails, user, userId, isCustom 
+        album, releaseYear, versionType, versionDetails, user, userId, isCustom, genre 
       }),
     });
     if (res.ok) return await res.json();
@@ -116,11 +116,70 @@ export async function updateSongPreferences({
 }
 
 /**
- * Fetches all favorite songs
+ * Fetches user's personal saved library of songs
  */
-export async function fetchFavorites() {
+export async function fetchUserLibrary(user) {
+  if (!user) return [];
   try {
-    const res = await fetch(`${BASE_URL}/favorites`);
+    const userParam = typeof user === 'object' ? (user.id || user.email) : user;
+    const res = await fetch(`${BASE_URL}/library?user=${encodeURIComponent(userParam)}`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('[Persistence API] Failed to fetch library:', err.message);
+  }
+  return [];
+}
+
+/**
+ * Saves a song to user's personal notebook library
+ */
+export async function saveSongToLibrary(songData, user) {
+  try {
+    const userParam = typeof user === 'object' ? (user?.id || user?.email) : (user || songData?.user);
+    const res = await fetch(`${BASE_URL}/library/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...songData,
+        ...(userParam ? { user: userParam } : {}),
+      }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('[Persistence API] Failed to save song to library:', err.message);
+  }
+  return null;
+}
+
+/**
+ * Removes a song from user's personal library
+ */
+export async function unsaveSongFromLibrary(songId, user) {
+  try {
+    const userParam = typeof user === 'object' ? (user?.id || user?.email) : user;
+    const res = await fetch(`${BASE_URL}/library/unsave`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        songId,
+        ...(userParam ? { user: userParam } : {}),
+      }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('[Persistence API] Failed to unsave song from library:', err.message);
+  }
+  return null;
+}
+
+/**
+ * Fetches all favorite songs for a specific user
+ */
+export async function fetchFavorites(user) {
+  if (!user) return [];
+  try {
+    const userParam = typeof user === 'object' ? (user.id || user.email) : user;
+    const res = await fetch(`${BASE_URL}/favorites?user=${encodeURIComponent(userParam)}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.warn('[Persistence API] Failed to fetch favorites:', err.message);
@@ -128,15 +187,16 @@ export async function fetchFavorites() {
   return [];
 }
 
-/**
- * Adds a song to favorites
- */
-export async function addFavorite(songData) {
+export async function addFavorite(songData, user) {
   try {
+    const userParam = typeof user === 'object' ? (user?.id || user?.email) : (user || songData?.user);
     const res = await fetch(`${BASE_URL}/favorites`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(songData),
+      body: JSON.stringify({
+        ...songData,
+        ...(userParam ? { user: userParam } : {}),
+      }),
     });
     if (res.ok) return await res.json();
   } catch (err) {
@@ -148,9 +208,13 @@ export async function addFavorite(songData) {
 /**
  * Removes a song from favorites
  */
-export async function removeFavorite(songId) {
+export async function removeFavorite(songId, user) {
   try {
-    const res = await fetch(`${BASE_URL}/favorites/${encodeURIComponent(songId)}`, {
+    const userParam = typeof user === 'object' ? (user.id || user.email) : user;
+    const url = userParam
+      ? `${BASE_URL}/favorites/${encodeURIComponent(songId)}?user=${encodeURIComponent(userParam)}`
+      : `${BASE_URL}/favorites/${encodeURIComponent(songId)}`;
+    const res = await fetch(url, {
       method: 'DELETE',
     });
     return res.ok;
@@ -161,11 +225,13 @@ export async function removeFavorite(songId) {
 }
 
 /**
- * Fetches all setlists with their songs
+ * Fetches setlists belonging to a specific user
  */
-export async function fetchSetlists() {
+export async function fetchSetlists(user) {
+  if (!user) return [];
   try {
-    const res = await fetch(`${BASE_URL}/setlists`);
+    const userParam = typeof user === 'object' ? (user.id || user.email) : user;
+    const res = await fetch(`${BASE_URL}/setlists?user=${encodeURIComponent(userParam)}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.warn('[Persistence API] Failed to fetch setlists:', err.message);
@@ -174,14 +240,15 @@ export async function fetchSetlists() {
 }
 
 /**
- * Creates a new setlist by name
+ * Creates a new setlist by name for a user
  */
-export async function createSetlist(name) {
+export async function createSetlist(name, user) {
   try {
+    const userParam = typeof user === 'object' ? (user.id || user.email) : user;
     const res = await fetch(`${BASE_URL}/setlists`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, user: userParam }),
     });
     if (res.ok) return await res.json();
   } catch (err) {
@@ -191,11 +258,15 @@ export async function createSetlist(name) {
 }
 
 /**
- * Deletes a setlist by name
+ * Deletes a setlist by name belonging to a user
  */
-export async function deleteSetlist(name) {
+export async function deleteSetlist(name, user) {
   try {
-    const res = await fetch(`${BASE_URL}/setlists/${encodeURIComponent(name)}`, {
+    const userParam = typeof user === 'object' ? (user.id || user.email) : user;
+    const url = userParam
+      ? `${BASE_URL}/setlists/${encodeURIComponent(name)}?user=${encodeURIComponent(userParam)}`
+      : `${BASE_URL}/setlists/${encodeURIComponent(name)}`;
+    const res = await fetch(url, {
       method: 'DELETE',
     });
     return res.ok;
@@ -205,15 +276,16 @@ export async function deleteSetlist(name) {
   return false;
 }
 
-/**
- * Adds a song to a setlist
- */
-export async function addSongToSetlist(payload) {
+export async function addSongToSetlist(payload, user) {
   try {
+    const userParam = typeof user === 'object' ? (user?.id || user?.email) : (user || payload?.user);
     const res = await fetch(`${BASE_URL}/setlists/songs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...payload,
+        ...(userParam ? { user: userParam } : {}),
+      }),
     });
     if (res.ok) return await res.json();
   } catch (err) {
@@ -225,12 +297,13 @@ export async function addSongToSetlist(payload) {
 /**
  * Removes a song from a setlist
  */
-export async function removeSongFromSetlist(setlistName, songId) {
+export async function removeSongFromSetlist(setlistName, songId, user) {
   try {
-    const res = await fetch(
-      `${BASE_URL}/setlists/${encodeURIComponent(setlistName)}/songs/${encodeURIComponent(songId)}`,
-      { method: 'DELETE' }
-    );
+    const userParam = typeof user === 'object' ? (user.id || user.email) : user;
+    const url = userParam
+      ? `${BASE_URL}/setlists/${encodeURIComponent(setlistName)}/songs/${encodeURIComponent(songId)}?user=${encodeURIComponent(userParam)}`
+      : `${BASE_URL}/setlists/${encodeURIComponent(setlistName)}/songs/${encodeURIComponent(songId)}`;
+    const res = await fetch(url, { method: 'DELETE' });
     return res.ok;
   } catch (err) {
     console.warn('[Persistence API] Failed to remove song from setlist:', err.message);
@@ -242,9 +315,22 @@ export async function removeSongFromSetlist(setlistName, songId) {
  * Looks up a chord definition from SQLite
  */
 export async function lookupChord(chordName, instrument = 'guitar') {
+  if (!chordName || typeof chordName !== 'string') return null;
+  const clean = chordName.trim();
+  if (
+    !clean ||
+    clean === '|' ||
+    clean.startsWith('𝄾') ||
+    clean.startsWith('𝄽') ||
+    clean.includes('(') ||
+    clean.includes('T')
+  ) {
+    return null;
+  }
+
   try {
     const res = await fetch(
-      `${BASE_URL}/chords/lookup?name=${encodeURIComponent(chordName)}&instrument=${encodeURIComponent(instrument)}`
+      `${BASE_URL}/chords/lookup?name=${encodeURIComponent(clean)}&instrument=${encodeURIComponent(instrument)}`
     );
     if (res.ok) return await res.json();
   } catch (err) {

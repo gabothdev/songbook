@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react';
+import React, { useId, useState, useEffect, useMemo } from 'react';
 import { Ticket, Sparkles } from 'lucide-react';
 import { parseImageFraming, reportBrokenImage } from '../../services/artworkService';
 
@@ -23,10 +23,25 @@ export default function TicketStubCase({
   const clipId = useId();
   const [isHovered, setIsHovered] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [triedProxy, setTriedProxy] = useState(false);
 
   const framing = parseImageFraming(albumCover);
   const actualUrl = framing.url;
-  const hasCover = Boolean(actualUrl) && !imageError;
+
+  useEffect(() => {
+    setImageError(false);
+    setTriedProxy(false);
+  }, [actualUrl]);
+
+  const displayUrl = useMemo(() => {
+    if (!actualUrl) return null;
+    if (triedProxy) {
+      return `/api/artwork/proxy?url=${encodeURIComponent(actualUrl)}`;
+    }
+    return actualUrl;
+  }, [actualUrl, triedProxy]);
+
+  const hasCover = Boolean(displayUrl) && !imageError;
 
   return (
     <div
@@ -79,7 +94,8 @@ export default function TicketStubCase({
           {hasCover ? (
             <image
               id="photo"
-              href={actualUrl}
+              href={displayUrl}
+              referrerPolicy="no-referrer"
               x={80.9 + (framing.x || 0)}
               y={13 + (framing.y || 0)}
               width={356.9 * (framing.zoom || 1)}
@@ -87,13 +103,17 @@ export default function TicketStubCase({
               preserveAspectRatio="xMidYMid slice"
               clipPath={`url(#${clipId})`}
               onError={() => {
-                setImageError(true);
-                reportBrokenImage({
-                  type: 'live',
-                  name: artistName,
-                  songTitle,
-                  url: actualUrl,
-                });
+                if (!triedProxy && actualUrl && !actualUrl.startsWith('data:')) {
+                  setTriedProxy(true);
+                } else {
+                  setImageError(true);
+                  reportBrokenImage({
+                    type: 'live',
+                    name: artistName,
+                    songTitle,
+                    url: actualUrl,
+                  });
+                }
               }}
             />
           ) : (

@@ -12,6 +12,9 @@ import ImportProgressModal from './ImportProgressModal.jsx';
 import DatabaseSongList from './DatabaseSongList.jsx';
 import OnlineOptionsList from './OnlineOptionsList.jsx';
 import ScoreResultsList from './ScoreResultsList.jsx';
+import AdminSongImportCurationModal from './AdminSongImportCurationModal.jsx';
+import { config } from '../../config.js';
+import { saveSongToLibrary } from '../../services/persistenceApi.js';
 
 export default function SongSearchRebuild({
   isOpen,
@@ -25,6 +28,7 @@ export default function SongSearchRebuild({
 }) {
   const auth = useAuth();
   const isPro = propIsPro !== undefined ? propIsPro : auth.isPro;
+  const isAdmin = auth.isAdmin;
   const openUpgradeModal = propOpenUpgradeModal || auth.openUpgradeModal;
   const inputRef = useRef(null);
 
@@ -41,6 +45,8 @@ export default function SongSearchRebuild({
     setExpandedIndex,
     selectedIndex,
     importProgress,
+    curatingSong,
+    setCuratingSong,
     matchingDatabaseSongs,
     handleSelectSong,
     handleSelectScoreItem,
@@ -49,12 +55,70 @@ export default function SongSearchRebuild({
     isOpen,
     databaseSongs,
     isPro,
+    isAdmin,
     onSongSelect,
     onScoreSelect,
     onDirectPlaySong,
     onClose,
     openUpgradeModal,
   });
+
+  const handleSaveCuratedToDatabase = async (curatedSongData) => {
+    const songId = curatedSongData.id || curatingSong?.id || null;
+    const payload = {
+      ...(songId ? { id: songId } : {}),
+      title: curatedSongData.title,
+      artist: curatedSongData.artist,
+      artistNames: curatedSongData.artistNames,
+      album: curatedSongData.album || null,
+      releaseYear: curatedSongData.releaseYear ? parseInt(curatedSongData.releaseYear, 10) : null,
+      versionType: curatedSongData.versionType || 'studio',
+      versionDetails: curatedSongData.versionDetails || null,
+      albumCover: curatedSongData.albumCover || null,
+      youtubeId: curatedSongData.youtubeId || null,
+      genre: curatedSongData.genre || null,
+      transpose: curatedSongData.transpose ?? 0,
+      content: curatedSongData.content || '',
+      syncData: curatedSongData.syncData || '[]',
+    };
+
+    const res = await fetch(`${config.API_BASE_URL}/dev/tables/songs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `Error al guardar en base de datos (HTTP ${res.status})`);
+    }
+
+    const createdSong = await res.json();
+    setCuratingSong(null);
+
+    if (auth.currentUser) {
+      saveSongToLibrary(createdSong, auth.currentUser).catch((err) => {
+        console.warn('Failed to save curated song to user notebook:', err);
+      });
+    }
+
+    if (onSongSelect) {
+      onSongSelect(createdSong);
+    }
+    if (onClose) {
+      onClose();
+    }
+  };
+
+  const handleSaveCuratedAsDraft = (curatedSongData) => {
+    setCuratingSong(null);
+    if (onSongSelect) {
+      onSongSelect(curatedSongData || curatingSong);
+    }
+    if (onClose) {
+      onClose();
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -78,16 +142,24 @@ export default function SongSearchRebuild({
             <div>
               <h2 className="text-lg sm:text-xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
                 <span>Buscar Canciones</span>
-                {!isPro && (
+                {isAdmin ? (
+                  <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                    Modo Admin
+                  </span>
+                ) : isPro ? (
+                  <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30">
+                    Modo Pro
+                  </span>
+                ) : (
                   <span className="text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                     Modo Free
                   </span>
                 )}
               </h2>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {isPro
-                  ? 'Canciones en biblioteca + opciones de acordes y BeatGrid online'
-                  : 'Canciones disponibles En Biblioteca'}
+                {isAdmin
+                  ? 'Catálogo oficial + Exploración y curación online (Chordify, UG, Cifra Club)'
+                  : 'Canciones disponibles en el catálogo oficial y biblioteca'}
               </p>
             </div>
           </div>
@@ -113,28 +185,20 @@ export default function SongSearchRebuild({
           </div>
         </div>
 
-        {/* Banner de acceso para Modo Free */}
-        {!isPro && (
+        {/* Banner para usuarios estándar y Pro */}
+        {!isAdmin && (
           <div className="mb-3 px-3.5 py-2 bg-amber-500/10 border border-amber-500/25 rounded-xl flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
             <div className="flex items-center gap-2 min-w-0">
               <Library className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
               <span className="truncate">
-                <strong>Plan Free:</strong> Acceso a canciones <strong>En Biblioteca</strong>. Pásate a Pro para buscar e importar opciones online.
+                Acceso a canciones <strong>En Biblioteca / Catálogo Oficial</strong>.
               </span>
             </div>
-            <button
-              type="button"
-              onClick={openUpgradeModal}
-              className="ml-2 px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[11px] transition shadow-xs flex items-center gap-1 cursor-pointer flex-shrink-0"
-            >
-              <Sparkles className="w-3 h-3" />
-              <span>Ver Pro</span>
-            </button>
           </div>
         )}
 
-        {/* Tabs: Acordes vs Partituras */}
-        <div className="flex items-center gap-2 mb-3 bg-slate-100 dark:bg-slate-950/60 p-1 rounded-xl self-start border border-slate-200 dark:border-slate-800">
+        {/* Tabs: Acordes vs Partituras (Partituras ocultas temporalmente para versión futura) */}
+        <div className="hidden items-center gap-2 mb-3 bg-slate-100 dark:bg-slate-950/60 p-1 rounded-xl self-start border border-slate-200 dark:border-slate-800">
           <button
             type="button"
             onClick={() => setSearchType('chords')}
@@ -181,11 +245,9 @@ export default function SongSearchRebuild({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={
-                searchType === 'scores'
-                  ? 'Buscar partitura o tango (ej: Piazzolla, Hotel California, Gardel)...'
-                  : isPro
+                isAdmin
                   ? 'Buscar en biblioteca o explorar online (ej: Spinetta, Seminare, Gardel)...'
-                  : 'Buscar canciones en biblioteca (ej: Spinetta, Seminare, Gardel)...'
+                  : 'Buscar canciones en el catálogo oficial (ej: Spinetta, Seminare, Gardel)...'
               }
               className="w-full bg-slate-100/55 dark:bg-slate-950/45 border border-slate-200 dark:border-slate-800/80 rounded-xl pl-10 pr-9 py-2.5 sm:py-3 text-sm font-semibold text-slate-800 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-amber-500"
               autoFocus
@@ -237,29 +299,8 @@ export default function SongSearchRebuild({
                 onSelectSong={handleSelectDatabaseSong}
               />
 
-              {/* Banner si no es Pro */}
-              {!isPro ? (
-                <div className="p-4 rounded-xl border border-amber-500/25 bg-amber-500/5 dark:bg-amber-500/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-200">
-                      <Sparkles className="w-4 h-4 text-amber-500" />
-                      <span>¿Buscas más opciones online?</span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      En el plan Free tienes acceso ilimitado a todas las canciones <strong>En Biblioteca</strong>. Pásate a Pro para explorar e importar opciones online con BeatGrid y video sincronizado.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={openUpgradeModal}
-                    className="px-3.5 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white rounded-xl font-bold text-xs transition shadow-sm flex items-center gap-1.5 cursor-pointer flex-shrink-0"
-                  >
-                    <Crown className="w-3.5 h-3.5" />
-                    <span>Desbloquear con Pro</span>
-                  </button>
-                </div>
-              ) : (
-                /* Resultados online externos */
+              {/* Si es Admin, mostrar opciones online externas de Chordify / UG / CifraClub */}
+              {isAdmin ? (
                 allResults.length > 0 ? (
                   <OnlineOptionsList
                     results={results}
@@ -270,7 +311,7 @@ export default function SongSearchRebuild({
                   />
                 ) : query && !isLoading && matchingDatabaseSongs.length === 0 ? (
                   <div className="text-center py-12 text-slate-400 dark:text-slate-500 select-none">
-                    <p className="text-sm font-semibold">No se encontraron resultados para "{query}"</p>
+                    <p className="text-sm font-semibold">No se encontraron resultados online para "{query}"</p>
                     <p className="text-xs mt-1">Revisa la ortografía o prueba con otra búsqueda.</p>
                   </div>
                 ) : !query && matchingDatabaseSongs.length === 0 ? (
@@ -278,15 +319,34 @@ export default function SongSearchRebuild({
                     <p className="text-xs font-semibold">Empieza a escribir para buscar opciones de acordes.</p>
                     <p className="text-[10px] mt-1 uppercase tracking-wider font-extrabold text-amber-500/70 flex items-center justify-center gap-1.5">
                       <Activity className="w-3 h-3 text-amber-500 animate-pulse" />
-                      <span>Opciones con BeatGrid rítmico y video sincronizado</span>
+                      <span>Exploración online con BeatGrid y curación oficial</span>
                     </p>
                   </div>
                 ) : null
+              ) : (
+                /* Para usuarios estándar y Pro: mensaje si no hay canciones en catálogo */
+                query && !isLoading && matchingDatabaseSongs.length === 0 && (
+                  <div className="text-center py-12 text-slate-400 dark:text-slate-500 select-none">
+                    <p className="text-sm font-semibold">No se encontraron canciones en el catálogo para "{query}"</p>
+                    <p className="text-xs mt-1">Solo los administradores pueden importar nuevas canciones al catálogo.</p>
+                  </div>
+                )
               )}
             </div>
           )}
         </div>
       </div>
+
+      {/* Modal de Curación para Administradores antes de persistir en base de datos */}
+      {curatingSong && (
+        <AdminSongImportCurationModal
+          isOpen={Boolean(curatingSong)}
+          rawSong={curatingSong}
+          onClose={() => setCuratingSong(null)}
+          onSaveToDatabase={handleSaveCuratedToDatabase}
+          onSaveAsDraft={handleSaveCuratedAsDraft}
+        />
+      )}
     </div>
   );
 }

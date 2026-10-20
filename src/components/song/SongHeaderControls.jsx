@@ -9,6 +9,9 @@ import {
   Sparkles,
   Crown,
   Edit3,
+  Bookmark,
+  BookmarkCheck,
+  Disc,
 } from 'lucide-react';
 import { transposeChord } from '../../utils/music';
 import { useAuth } from '../../context/AuthContext';
@@ -18,6 +21,7 @@ import { useAuth } from '../../context/AuthContext';
  * Fixed-dimension utility bar:
  * - Back button / Exit stage
  * - Edit song button (Admin feature ✏️)
+ * - Save to notebook (🔖)
  * - Toggle favorite (⭐)
  * - Add to setlist popover
  * - Transpose controls (+/-) (Fixed width, zero layout shift)
@@ -30,6 +34,8 @@ export default function SongHeaderControls({
   setlistContext = null,
   isFavorite = false,
   onToggleFavorite = null,
+  isSaved = false,
+  onToggleSaveSong = null,
   setlists = [],
   onAddSongToSetlist = null,
   transpose = 0,
@@ -45,12 +51,13 @@ export default function SongHeaderControls({
   isEditMode = false,
   onToggleEditMode = null,
 }) {
-  const { isAdmin: authIsAdmin } = useAuth();
+  const { currentUser, isAdmin: authIsAdmin } = useAuth();
   const isAdmin = propIsAdmin !== undefined ? propIsAdmin : authIsAdmin;
+  const canEdit = Boolean(isAdmin || currentUser);
   const [isAddToSetlistOpen, setIsAddToSetlistOpen] = useState(false);
 
   const handleEditClick = () => {
-    if (!isAdmin) return;
+    if (!canEdit) return;
     if (onToggleEditMode) {
       onToggleEditMode();
     }
@@ -80,20 +87,45 @@ export default function SongHeaderControls({
         </button>
 
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          {/* Edit Song Button (Exclusively for Admins) */}
-          {isAdmin && (
+          {/* Edit Song Button (For Registered Musicians and Admins) */}
+          {canEdit && (
             <button
               type="button"
               onClick={handleEditClick}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold font-sans transition-all cursor-pointer shadow-sm ${
+              className={`relative group w-8 h-8 flex items-center justify-center rounded-xl border text-xs font-bold font-sans transition-all cursor-pointer shadow-sm ${
                 isEditMode
                   ? 'bg-amber-600 border-amber-700 text-white hover:bg-amber-700'
                   : 'bg-white hover:bg-stone-50 border-stone-300 text-stone-700'
               }`}
-              title={isEditMode ? 'Cerrar Modo Edición' : 'Editar letra, compases y estructura de la canción (Admin)'}
+              title={isEditMode ? 'Cerrar Modo Edición' : 'Editar letra, sincronizar compases y estructura'}
             >
               <Edit3 className={`w-3.5 h-3.5 ${isEditMode ? 'text-white' : 'text-amber-700'}`} />
-              <span>{isEditMode ? 'Editando' : 'Editar'}</span>
+              <span className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-stone-900/90 text-stone-100 px-2 py-0.5 text-[10px] font-sans font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md z-40">
+                {isEditMode ? 'Editando' : 'Editar'}
+              </span>
+            </button>
+          )}
+
+          {/* Save to Notebook Button */}
+          {onToggleSaveSong && (
+            <button
+              type="button"
+              onClick={() => onToggleSaveSong(song)}
+              className={`relative group w-8 h-8 flex items-center justify-center rounded-xl border text-xs font-bold font-sans transition-all cursor-pointer shadow-sm ${
+                isSaved
+                  ? 'bg-emerald-100 border-emerald-300 text-emerald-900 hover:bg-emerald-200'
+                  : 'bg-white hover:bg-stone-50 border-stone-300 text-stone-700'
+              }`}
+              title={isSaved ? 'Guardada en tu cuaderno (clic para quitar)' : 'Guardar canción en tu cuaderno'}
+            >
+              {isSaved ? (
+                <BookmarkCheck className="w-3.5 h-3.5 text-emerald-700 fill-emerald-600/30" />
+              ) : (
+                <Bookmark className="w-3.5 h-3.5 text-emerald-700" />
+              )}
+              <span className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-stone-900/90 text-stone-100 px-2 py-0.5 text-[10px] font-sans font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md z-40">
+                {isSaved ? 'Guardada' : 'Guardar'}
+              </span>
             </button>
           )}
 
@@ -102,7 +134,7 @@ export default function SongHeaderControls({
             <button
               type="button"
               onClick={() => onToggleFavorite(song)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold font-sans transition-all cursor-pointer shadow-sm ${
+              className={`relative group w-8 h-8 flex items-center justify-center rounded-xl border text-xs font-bold font-sans transition-all cursor-pointer shadow-sm ${
                 isFavorite
                   ? 'bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200'
                   : 'bg-white hover:bg-stone-50 border-stone-300 text-stone-700'
@@ -114,21 +146,31 @@ export default function SongHeaderControls({
                   isFavorite ? 'text-amber-500 fill-amber-400' : 'text-stone-400'
                 }`}
               />
-              <span className="hidden sm:inline">{isFavorite ? 'Favorita' : 'Favorito'}</span>
+              <span className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-stone-900/90 text-stone-100 px-2 py-0.5 text-[10px] font-sans font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md z-40">
+                {isFavorite ? 'Favorita' : 'Favorito'}
+              </span>
             </button>
           )}
 
           {/* Add to Setlist Popover Button */}
-          {onAddSongToSetlist && setlists.length > 0 && (
+          {onAddSongToSetlist && (setlists.length > 0 || !currentUser) && (
             <div className="relative">
               <button
                 type="button"
-                onClick={() => setIsAddToSetlistOpen(!isAddToSetlistOpen)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white hover:bg-stone-50 text-stone-700 hover:text-stone-900 rounded-xl border border-stone-300 text-xs font-bold font-sans shadow-sm transition-all cursor-pointer"
+                onClick={() => {
+                  if (!currentUser) {
+                    onAddSongToSetlist(null, song);
+                    return;
+                  }
+                  setIsAddToSetlistOpen(!isAddToSetlistOpen);
+                }}
+                className="relative group w-8 h-8 flex items-center justify-center bg-white hover:bg-stone-50 text-stone-700 hover:text-stone-900 rounded-xl border border-stone-300 text-xs font-bold font-sans shadow-sm transition-all cursor-pointer"
                 title="Agregar esta canción a un setlist"
               >
                 <FolderPlus className="w-3.5 h-3.5 text-amber-700" />
-                <span className="hidden sm:inline">Al Setlist</span>
+                <span className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-stone-900/90 text-stone-100 px-2 py-0.5 text-[10px] font-sans font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md z-40">
+                  Al Setlist
+                </span>
               </button>
 
               {/* Dropdown Menu of Setlists */}
@@ -248,60 +290,94 @@ export default function SongHeaderControls({
           )}
         </div>
         {(() => {
-          const artistDisplay = Array.isArray(song.artists) && song.artists.length > 0
-            ? song.artists.map((a) => a.name).join(', ')
-            : (song.artist || '');
+          let rawNames = [];
+          if (Array.isArray(song.artists) && song.artists.length > 0) {
+            rawNames = song.artists.map((a) => a?.name).filter(Boolean);
+          } else if (song.artist) {
+            rawNames = song.artist.split(',').map((s) => s.trim()).filter(Boolean);
+          }
+
+          // Desduplicar y descartar cadenas compuestas que sumen a los artistas individuales
+          const uniqueArtists = [];
+          for (const name of rawNames) {
+            if (name.includes(',')) {
+              const parts = name.split(',').map((p) => p.trim());
+              const allPartsExist = parts.every((p) =>
+                rawNames.some((other) => other !== name && other.toLowerCase() === p.toLowerCase())
+              );
+              if (allPartsExist) continue;
+            }
+            if (!uniqueArtists.some((existing) => existing.toLowerCase() === name.toLowerCase())) {
+              uniqueArtists.push(name);
+            }
+          }
+
+          const artistDisplay = uniqueArtists.join(', ');
           return (
-            <p className="text-xs sm:text-sm font-sans text-stone-600 mt-0.5">
-              {artistDisplay} {song.composer ? `• ${song.composer}` : ''}
-            </p>
+            <div className="flex items-center gap-2 mt-1 flex-wrap text-xs sm:text-sm font-sans text-stone-600">
+              <span className="font-semibold text-stone-800">{artistDisplay}</span>
+              {song.composer && <span className="text-stone-500">• {song.composer}</span>}
+
+              {/* Álbum al lado del artista con icono Disc */}
+              {song.album && (
+                <span className="inline-flex items-center gap-1.5 text-stone-700">
+                  <span className="text-stone-400 not-italic">•</span>
+                  <Disc className="w-3.5 h-3.5 text-stone-500 flex-shrink-0" />
+                  <span className="font-serif italic font-semibold text-stone-800">
+                    {song.album}
+                  </span>
+                  {song.releaseYear && (
+                    <span className="font-mono text-[11px] text-stone-500 not-italic font-normal">
+                      ({song.releaseYear})
+                    </span>
+                  )}
+                </span>
+              )}
+
+              {/* Si no hay álbum pero sí año de lanzamiento */}
+              {!song.album && song.releaseYear && (
+                <span className="text-stone-500 font-mono text-[11px]">
+                  • ({song.releaseYear})
+                </span>
+              )}
+
+              {/* Contexto de la Versión si no es de estudio */}
+              {song.versionType === 'live' ? (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-100/90 text-rose-900 border border-rose-300 text-[10px] font-bold shadow-xs">
+                  <span>🎙️</span>
+                  <span>En Vivo</span>
+                </span>
+              ) : song.versionType === 'soundtrack' ? (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100/90 text-amber-900 border border-amber-300 text-[10px] font-bold shadow-xs">
+                  <span>🎬</span>
+                  <span>Banda Sonora</span>
+                </span>
+              ) : song.versionType === 'session' ? (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-stone-200/90 text-stone-800 border border-stone-300 text-[10px] font-bold shadow-xs">
+                  <span>📻</span>
+                  <span>Sesión</span>
+                </span>
+              ) : song.versionType === 'acoustic' ? (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-orange-100/90 text-orange-900 border border-orange-300 text-[10px] font-bold shadow-xs">
+                  <span>🪕</span>
+                  <span>Acústico</span>
+                </span>
+              ) : null}
+
+              {song.versionDetails && (
+                <span className="text-stone-500 italic text-[11px]">
+                  • {song.versionDetails}
+                </span>
+              )}
+
+              {song.genre && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-stone-100 text-stone-700 border border-stone-300 text-[10px] font-medium font-sans shadow-xs">
+                  {song.genre}
+                </span>
+              )}
+            </div>
           );
         })()}
-
-        {/* Álbum, Año y Contexto de la Versión */}
-        {(song.album || song.versionType || song.releaseYear || song.versionDetails) && (
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap text-xs font-sans">
-            {song.versionType === 'live' ? (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-100/90 text-rose-900 border border-rose-300 text-[10px] font-bold shadow-xs">
-                <span>🎙️</span>
-                <span>En Vivo</span>
-              </span>
-            ) : song.versionType === 'soundtrack' ? (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100/90 text-amber-900 border border-amber-300 text-[10px] font-bold shadow-xs">
-                <span>🎬</span>
-                <span>Banda Sonora</span>
-              </span>
-            ) : song.versionType === 'session' ? (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-stone-200/90 text-stone-800 border border-stone-300 text-[10px] font-bold shadow-xs">
-                <span>📻</span>
-                <span>Sesión</span>
-              </span>
-            ) : song.versionType === 'acoustic' ? (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-100/90 text-orange-900 border border-orange-300 text-[10px] font-bold shadow-xs">
-                <span>🪕</span>
-                <span>Acústico</span>
-              </span>
-            ) : null}
-
-            {song.album && (
-              <span className="font-serif italic text-stone-700 font-medium">
-                De: <strong className="font-bold">{song.album}</strong>
-              </span>
-            )}
-
-            {song.releaseYear && (
-              <span className="text-stone-500 font-mono text-[11px]">
-                ({song.releaseYear})
-              </span>
-            )}
-
-            {song.versionDetails && (
-              <span className="text-stone-500 italic text-[11px]">
-                • {song.versionDetails}
-              </span>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

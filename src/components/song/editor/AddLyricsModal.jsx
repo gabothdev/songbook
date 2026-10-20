@@ -12,6 +12,7 @@ export default function AddLyricsModal({
   isOpen,
   onClose,
   onApplyLyrics,
+  onSaveLyrics,
 }) {
   const [lyricsInput, setLyricsInput] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
@@ -82,7 +83,10 @@ export default function AddLyricsModal({
 
   const handleApply = () => {
     if (!lyricsInput.trim()) return;
-    onApplyLyrics(lyricsInput.trim());
+    const callback = onSaveLyrics || onApplyLyrics;
+    if (callback) {
+      callback(lyricsInput.trim());
+    }
     setLyricsInput('');
     onClose();
   };

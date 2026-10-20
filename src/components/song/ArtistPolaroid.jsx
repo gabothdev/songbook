@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react';
+import React, { useId, useState, useEffect, useMemo } from 'react';
 import { Camera, Image as ImageIcon, Sparkles, Edit3 } from 'lucide-react';
 import { parseImageFraming, reportBrokenImage } from '../../services/artworkService';
 
@@ -21,10 +21,25 @@ export default function ArtistPolaroid({
   const filterId = useId();
   const [isHovered, setIsHovered] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [triedProxy, setTriedProxy] = useState(false);
 
   const framing = parseImageFraming(artistImage);
   const actualUrl = framing.url;
-  const hasPhoto = Boolean(actualUrl) && !imageError;
+
+  useEffect(() => {
+    setImageError(false);
+    setTriedProxy(false);
+  }, [actualUrl]);
+
+  const displayUrl = useMemo(() => {
+    if (!actualUrl) return null;
+    if (triedProxy) {
+      return `/api/artwork/proxy?url=${encodeURIComponent(actualUrl)}`;
+    }
+    return actualUrl;
+  }, [actualUrl, triedProxy]);
+
+  const hasPhoto = Boolean(displayUrl) && !imageError;
 
   return (
     <div
@@ -92,7 +107,8 @@ export default function ArtistPolaroid({
             {/* PHOTO SLOT (<rect id="photo">) */}
             {hasPhoto ? (
               <image
-                href={actualUrl}
+                href={displayUrl}
+                referrerPolicy="no-referrer"
                 x={428 + (framing.x || 0)}
                 y={331.1 + (framing.y || 0)}
                 width={300.3 * (framing.zoom || 1)}
@@ -100,13 +116,17 @@ export default function ArtistPolaroid({
                 preserveAspectRatio="xMidYMid slice"
                 clipPath={`url(#${clipId})`}
                 onError={() => {
-                  setImageError(true);
-                  reportBrokenImage({
-                    type: 'artist',
-                    name: artistName,
-                    songTitle,
-                    url: actualUrl,
-                  });
+                  if (!triedProxy && actualUrl && !actualUrl.startsWith('data:')) {
+                    setTriedProxy(true);
+                  } else {
+                    setImageError(true);
+                    reportBrokenImage({
+                      type: 'artist',
+                      name: artistName,
+                      songTitle,
+                      url: actualUrl,
+                    });
+                  }
                 }}
               />
             ) : (

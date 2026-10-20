@@ -47,3 +47,17 @@ Para optimizar el uso de contexto en las conversaciones con IA, cada módulo té
 4. **Sanitización AlphaTex**: Toda partitura AlphaTex debe procesarse con `alphaTexSanitizer.js` para evitar errores `AT202` y `AT205`.
 5. **Layout Persistente**: Nunca desmontar el reproductor de video de YouTube o atril al cambiar de pestaña; mantener el ciclo de vida continuo.
 6. **Mantenimiento Continuo de Docs y Skills (Auto-Sync)**: Al implementar nuevas lógicas, corregir bugs o modificar contratos de datos, el agente DEBE actualizar obligatoriamente el archivo `AGENTS.md` del módulo correspondiente y/o las skills afectadas en `.agents/skills/<skill-name>/SKILL.md` antes de dar la tarea por concluida.
+
+---
+
+## 4. Pruebas Externas y Compartir en Vivo
+
+Para compartir la web app con músicos o beta testers externos sin alterar la persistencia SQLite ni enfrentar bloqueos de Puppeteer/YouTube en servidores cloud:
+- **Comando rápido**: `npm run share` (o doble clic en `share.bat`).
+- **Comportamiento**:
+  1. Realiza automáticamente un respaldo preventivo de `server/prisma/dev.db` en `server/prisma/dev.db.bak` y en `server/prisma/backups/dev_<timestamp>.db`.
+  2. Verifica/compila el frontend de producción en `/dist`.
+  3. Inicia el servidor Node/Express en el puerto 3001.
+  4. Levanta un túnel HTTPS seguro mediante Cloudflare Tunnel (`cloudflared`) y expone la URL pública en terminal.
+- **Recompilación forzada**: `npm run share:build`.
+

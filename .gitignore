@@ -47,5 +47,7 @@ server/*.jpg
 server/storage/
 *.db.bak
 *.db-bak
+*.bak
 server/check_duplicates.js
 server/deduplicate_songs.js
+server/scripts/dev-tools/

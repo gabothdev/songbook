@@ -28,6 +28,9 @@ export default function WordChordDropSlot({
   onMergeWords,
   isHighlighted = false,
   isSectionSynced = false,
+  isLineActive = false,
+  isChordActive = false,
+  onNavigateChord = null,
 }) {
   const [isEditingText, setIsEditingText] = useState(false);
   const [editText, setEditText] = useState(item.text || '');
@@ -80,6 +83,14 @@ export default function WordChordDropSlot({
       onAssignChord(secIdx, lineIdx, item.id, activeStampChord);
     } else {
       onOpenPicker({ secIdx, lineIdx, wordId: item.id });
+    }
+  };
+
+  const handleChordBadgeClick = () => {
+    if (activeStampChord) {
+      onAssignChord(secIdx, lineIdx, item.id, activeStampChord);
+    } else if (onNavigateChord) {
+      onNavigateChord(item.chord);
     }
   };
 
@@ -138,20 +149,21 @@ export default function WordChordDropSlot({
           <div
             draggable
             onDragStart={handleDragStartChord}
-            className={`inline-flex items-center gap-1 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs select-none cursor-grab active:cursor-grabbing transition-transform hover:scale-105 group/chord ${
+            onClick={handleChordBadgeClick}
+            onDoubleClick={() => onOpenPicker({ secIdx, lineIdx, wordId: item.id })}
+            className={`inline-flex items-center gap-1 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs select-none cursor-pointer active:cursor-grabbing transition-all hover:scale-105 group/chord ${
               activeStampChord ? 'cursor-copy ring-2 ring-amber-500' : ''
             } ${
-              isSectionSynced
+              isChordActive
+                ? 'bg-amber-500 text-amber-950 ring-2 ring-amber-600 shadow-md scale-110 z-10 font-black'
+                : isSectionSynced
                 ? 'text-amber-950 bg-amber-200/90 hover:bg-amber-300 border border-amber-400/80'
                 : 'text-stone-700 bg-stone-100 hover:bg-amber-100 border border-dashed border-stone-300 hover:border-amber-400'
             }`}
-            onClick={activeStampChord ? handleSlotClick : undefined}
             title={
               activeStampChord
                 ? `Clic para estampar [${activeStampChord}]`
-                : isSectionSynced
-                ? `Acorde [${item.chord}] sincronizado con timestamp. Arrastra para mover o clic en la cruz para quitar.`
-                : `Acorde [${item.chord}] sin timestamp (modo libre). Arrastra para mover o clic en la cruz para quitar.`
+                : `Clic para ir al pulso en BeatGrid y video • Doble clic para cambiar • Arrastra para mover`
             }
           >
             <span>{item.chord}</span>
@@ -213,8 +225,14 @@ export default function WordChordDropSlot({
             <span
               onDoubleClick={() => setIsEditingText(true)}
               onClick={handleWordClick}
-              className={`font-sans text-sm whitespace-pre leading-snug text-stone-900 font-medium rounded transition-colors cursor-text select-text ${
+              className={`font-sans text-sm whitespace-pre leading-snug rounded transition-colors cursor-text select-text ${
+                isLineActive ? 'text-stone-950 font-bold' : 'text-stone-900 font-medium'
+              } ${
                 isHoveredDrop ? 'bg-amber-200 font-bold' : ''
+              } ${
+                item.isSyllable
+                  ? 'border-b border-dashed border-amber-500/70 px-0.5 bg-amber-50/50'
+                  : ''
               } ${
                 activeStampChord ? 'hover:bg-amber-100 cursor-copy' : 'hover:bg-stone-200/40'
               }`}
@@ -223,23 +241,23 @@ export default function WordChordDropSlot({
               {wordText}
             </span>
 
-            {/* Syllable merge tool (🔗) on hover */}
-            {item.isSyllable && onMergeWords && (
+            {/* Syllable merge tool (🔗) between connected syllables */}
+            {(item.canMergeWithNext ?? item.isSyllable) && onMergeWords && (
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   onMergeWords(secIdx, lineIdx, item.id);
                 }}
-                className="opacity-0 group-hover/word:opacity-100 text-stone-400 hover:text-amber-800 p-0.5 cursor-pointer"
+                className="opacity-70 group-hover/word:opacity-100 text-amber-700 hover:text-amber-950 hover:bg-amber-200/70 rounded p-0.5 cursor-pointer transition-all"
                 title="Unir con la siguiente sílaba"
               >
                 <Link2 className="w-2.5 h-2.5" />
               </button>
             )}
 
-            {/* Syllable split tool (✂️) on hover for words >= 2 chars */}
-            {canSplit && !item.isSyllable && onSplitWord && (
+            {/* Syllable split tool (✂️) on hover for words/syllables >= 2 chars */}
+            {canSplit && onSplitWord && (
               <button
                 type="button"
                 onClick={(e) => {

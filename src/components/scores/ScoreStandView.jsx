@@ -41,156 +41,18 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ScoreStageBar from './ScoreStageBar';
 import TangoArchiveViewer from './TangoArchiveViewer';
 import ScoreDigitizerStudio from './ScoreDigitizerStudio';
-import { sanitizeAlphaTex } from '../../utils/alphaTexSanitizer';
+import ScorePlaybackBar from './components/ScorePlaybackBar';
+import { useAlphaTabPlayer } from './hooks/useAlphaTabPlayer';
+import {
+  SOUNDFONT_URL,
+  getTuningDescription,
+  getDifficultyLabel,
+  detectIdealStaveProfile,
+  ytTimeToAlphaTabTick,
+  alphaTabBeatToYtTime
+} from './utils/scoreHelpers';
 
-// Configurar AlphaTab para renderizar la banda de letras en la parte inferior del pentagrama de tablatura (estilo Songsterr)
-if (Environment?.defaultRenderers) {
-  Environment.defaultRenderers.forEach((factory) => {
-    if (factory.effectBands) {
-      factory.effectBands.forEach((band) => {
-        if (band.effect?.constructor?.name === 'LyricsEffectInfo') {
-          band.mode = 3; // 3 = EffectBandMode.SharedBottom (debajo de notas y plicas)
-        }
-      });
-    }
-  });
-}
 
-const SOUNDFONT_URL = 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/soundfont/sonivox.sf2';
-
-function getTuningDescription(tuningArray) {
-  if (!tuningArray || tuningArray.length === 0) return 'Estándar (E-A-D-G-B-E)';
-  const standard = [64, 59, 55, 50, 45, 40];
-  const dropD = [64, 59, 55, 50, 45, 38];
-  const ebStandard = [63, 58, 54, 49, 44, 39];
-  const dStandard = [62, 57, 53, 48, 43, 38];
-
-  const matches = (arr) => arr.length === tuningArray.length && arr.every((v, i) => v === tuningArray[i]);
-  if (matches(standard)) return 'Estándar (E-A-D-G-B-E)';
-  if (matches(dropD)) return 'Drop D (D-A-D-G-B-E)';
-  if (matches(ebStandard)) return 'Medio tono abajo (Eb-Ab-Db-Gb-Bb-Eb)';
-  if (matches(dStandard)) return 'D Standard (1 tono abajo)';
-  return 'Afinación Alternativa';
-}
-
-function getDifficultyLabel(diff) {
-  if (!diff) return null;
-  switch (diff) {
-    case 1: return { text: 'Principiante', color: 'bg-emerald-100 text-emerald-800 border-emerald-300' };
-    case 2: return { text: 'Intermedio Bajo', color: 'bg-sky-100 text-sky-800 border-sky-300' };
-    case 3: return { text: 'Intermedio', color: 'bg-amber-100 text-amber-800 border-amber-300' };
-    case 4: return { text: 'Avanzado', color: 'bg-orange-100 text-orange-800 border-orange-300' };
-    case 5: return { text: 'Virtuoso', color: 'bg-rose-100 text-rose-800 border-rose-300' };
-    default: return { text: `Nivel ${diff}`, color: 'bg-stone-100 text-stone-700 border-stone-300' };
-  }
-}
-
-/**
- * Detecta automáticamente el perfil de notación óptimo según el instrumento:
- * - Bandoneón / Piano / Teclados / Cuerdas clásicas / Vientos / Voz -> 'score' (Pentagrama estándar)
- * - Guitarras / Bajo / Ukelele -> 'default' (Tablatura + Pentagrama) o 'tab'
- */
-function detectIdealStaveProfile(track) {
-  if (!track) return 'default';
-  if (!track.tuning || track.tuning.length === 0) return 'score';
-
-  const name = (track.name || '').toLowerCase();
-  const scoreKeywords = [
-    'piano', 'bandoneon', 'bandoneón', 'accordion', 'acordeon', 'acordeón',
-    'teclado', 'keyboard', 'organ', 'órgano', 'violin', 'violín', 'viola',
-    'cello', 'violonchelo', 'flute', 'flauta', 'trumpet', 'trompeta',
-    'sax', 'clarinete', 'oboe', 'fagot', 'voice', 'voz', 'choir', 'coro',
-    'brass', 'strings', 'cuerdas'
-  ];
-
-  if (scoreKeywords.some(kw => name.includes(kw))) {
-    return 'score';
-  }
-
-  const p = track.playbackInfo?.program ?? (track.instrument ?? -1);
-  if ((p >= 0 && p <= 23) || (p >= 40 && p <= 79)) {
-    return 'score';
-  }
-
-  return 'default';
-}
-
-/**
- * Convierte los segundos de reproducción de un video de YouTube al tick exacto de AlphaTab
- * utilizando la matriz de videoPoints (marcas de tiempo por compás extraídas de Songsterr).
- */
-function ytTimeToAlphaTabTick(ytSec, videoPoints, score) {
-  if (!score?.masterBars || score.masterBars.length === 0) return null;
-  const masterBars = score.masterBars;
-
-  if (!Array.isArray(videoPoints) || videoPoints.length === 0) {
-    return null;
-  }
-
-  // Si el video está en el silencio de entrada previo al primer compás
-  if (ytSec < videoPoints[0]) {
-    return {
-      tick: masterBars[0].start,
-      measureIndex: 0,
-      currentBar: 1,
-      isIntro: true
-    };
-  }
-
-  // Si el video ya superó el último punto disponible
-  const lastIdx = Math.min(videoPoints.length - 1, masterBars.length - 1);
-  if (ytSec >= videoPoints[lastIdx]) {
-    const lastBar = masterBars[lastIdx];
-    const dur = lastBar.calculateDuration ? lastBar.calculateDuration() : 3840;
-    return {
-      tick: lastBar.start + dur,
-      measureIndex: lastIdx,
-      currentBar: lastIdx + 1,
-      isIntro: false
-    };
-  }
-
-  // Búsqueda del compás m donde videoPoints[m] <= ytSec < videoPoints[m + 1]
-  let m = 0;
-  for (let i = 0; i < videoPoints.length - 1; i++) {
-    if (ytSec >= videoPoints[i] && ytSec < videoPoints[i + 1]) {
-      m = i;
-      break;
-    }
-  }
-
-  const mStart = videoPoints[m];
-  const mEnd = videoPoints[m + 1];
-  const mDur = mEnd - mStart;
-  const progress = mDur > 0 ? Math.min(1, Math.max(0, (ytSec - mStart) / mDur)) : 0;
-
-  const bar = masterBars[m];
-  if (!bar) return null;
-
-  const barDur = bar.calculateDuration ? bar.calculateDuration() : 3840;
-  const tick = bar.start + Math.round(progress * barDur);
-
-  return {
-    tick,
-    measureIndex: m,
-    currentBar: m + 1,
-    isIntro: false
-  };
-}
-
-/**
- * Convierte un compás y posición fraccional de AlphaTab a segundos del video de YouTube.
- */
-function alphaTabBeatToYtTime(barIndex, beatFraction = 0, videoPoints, api) {
-  if (Array.isArray(videoPoints) && videoPoints.length > 0) {
-    const idx = Math.max(0, Math.min(barIndex, videoPoints.length - 1));
-    const mStart = videoPoints[idx];
-    if (idx >= videoPoints.length - 1) return mStart;
-    const mEnd = videoPoints[idx + 1];
-    return mStart + beatFraction * (mEnd - mStart);
-  }
-  return (api?.timePosition || 0) / 1000;
-}
 
 export default function ScoreStandView({
   scoreData,
@@ -1482,227 +1344,40 @@ export default function ScoreStandView({
       )}
 
       {/* ================= BARRA DE TRANSPORTE Y REPRODUCCIÓN ================= */}
-      <div className="flex-shrink-0 bg-stone-900 text-stone-100 px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-3 shadow-md z-20 print:hidden">
-        {/* Play / Pause / Stop */}
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handlePlayPause}
-            className="w-9 h-9 rounded-full bg-amber-500 hover:bg-amber-400 text-stone-950 flex items-center justify-center transition shadow-md cursor-pointer flex-shrink-0"
-            title={isPlaying || isAudioHistoricalPlaying ? 'Pausar' : 'Reproducir'}
-          >
-            {isPlaying || isAudioHistoricalPlaying ? (
-              <Pause className="w-4 h-4 fill-current" />
-            ) : (
-              <Play className="w-4 h-4 fill-current ml-0.5" />
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={handleStop}
-            className="w-8 h-8 rounded-full bg-stone-800 hover:bg-stone-700 text-stone-300 flex items-center justify-center transition cursor-pointer flex-shrink-0"
-            title="Detener y volver al inicio"
-          >
-            <Square className="w-3.5 h-3.5 fill-current" />
-          </button>
-
-          {/* Tiempo y Compás */}
-          <div className="font-mono text-xs text-stone-300 ml-2">
-            {isTangoArchive ? (
-              <span>{formatTime(audioCurrentTime * 1000)} / {formatTime(audioDuration * 1000)}</span>
-            ) : (
-              <>
-                <span className="text-amber-300 font-bold">{formatTime(currentTimeMs)}</span>
-                <span className="text-stone-500"> / </span>
-                <span className="text-stone-400">{formatTime(totalTimeMs)}</span>
-                <span className="ml-2 text-stone-400 font-sans text-[11px]">
-                  (Compás <strong className="text-stone-200 font-mono">{currentBar}</strong>)
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Grabación Histórica de Tango si aplica */}
-        {isTangoArchive && effectiveScore.recordings?.length > 0 && (
-          <div className="flex items-center gap-2 bg-stone-800/90 px-3 py-1 rounded-xl border border-stone-700 text-xs">
-            <Radio className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
-            <select
-              value={activeRecordingIndex}
-              onChange={(e) => {
-                const idx = Number(e.target.value);
-                setActiveRecordingIndex(idx);
-                setIsAudioHistoricalPlaying(false);
-                if (audioHistoricalRef.current) {
-                  audioHistoricalRef.current.currentTime = 0;
-                }
-              }}
-              className="bg-transparent text-stone-200 font-sans text-xs focus:outline-hidden cursor-pointer max-w-[200px] truncate"
-            >
-              {effectiveScore.recordings.map((rec, i) => (
-                <option key={i} value={i} className="bg-stone-900 text-stone-200">
-                  {rec.formation || rec.title} ({rec.details || rec.duration})
-                </option>
-              ))}
-            </select>
-            <audio
-              ref={audioHistoricalRef}
-              src={effectiveScore.recordings[activeRecordingIndex]?.mp3}
-              onTimeUpdate={(e) => setAudioCurrentTime(e.target.currentTime)}
-              onLoadedMetadata={(e) => setAudioDuration(e.target.duration)}
-              onEnded={() => setIsAudioHistoricalPlaying(false)}
-            />
-          </div>
-        )}
-
-        {/* Velocidad, Bucle, Metrónomo y Vistas */}
-        <div className="flex items-center gap-2 flex-wrap text-xs">
-          {!isTangoArchive && (
-            <>
-              {/* Velocidad de Reproducción */}
-              <div className="flex items-center gap-1 bg-stone-800 rounded-lg p-0.5 border border-stone-700">
-                {[0.75, 1.0, 1.25].map((speed) => (
-                  <button
-                    key={speed}
-                    type="button"
-                    onClick={() => handleSpeedChange(speed)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-mono transition cursor-pointer ${
-                      playbackSpeed === speed
-                        ? 'bg-amber-500 text-stone-950 font-bold'
-                        : 'text-stone-300 hover:text-white'
-                    }`}
-                  >
-                    {speed}x
-                  </button>
-                ))}
-              </div>
-
-              {/* Bucle */}
-              <button
-                type="button"
-                onClick={handleToggleLoop}
-                className={`p-1.5 rounded-lg border transition cursor-pointer ${
-                  isLooping
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                    : 'bg-stone-800 text-stone-400 border-stone-700 hover:text-white'
-                }`}
-                title={isLooping ? 'Desactivar bucle' : 'Repetir en bucle'}
-              >
-                <Repeat className="w-3.5 h-3.5" />
-              </button>
-
-              {/* Metrónomo */}
-              <button
-                type="button"
-                onClick={handleToggleMetronome}
-                className={`p-1.5 rounded-lg border transition cursor-pointer ${
-                  isMetronomeActive
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                    : 'bg-stone-800 text-stone-400 border-stone-700 hover:text-white'
-                }`}
-                title={isMetronomeActive ? 'Silenciar metrónomo' : 'Activar clic de metrónomo'}
-              >
-                <Gauge className="w-3.5 h-3.5" />
-              </button>
-
-              <div className="h-4 w-px bg-stone-700 mx-1" />
-
-              {/* Modo de Vista: Tab vs Pentagrama vs Ambos */}
-              <div className="flex items-center bg-stone-800 rounded-lg p-0.5 border border-stone-700">
-                <button
-                  type="button"
-                  onClick={() => setStaveProfile('tab')}
-                  className={`px-2 py-0.5 rounded text-[11px] transition cursor-pointer ${
-                    staveProfile === 'tab' ? 'bg-amber-500 text-stone-950 font-bold' : 'text-stone-300 hover:text-white'
-                  }`}
-                  title="Mostrar solo tablatura"
-                >
-                  Tab
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStaveProfile('score')}
-                  className={`px-2 py-0.5 rounded text-[11px] transition cursor-pointer ${
-                    staveProfile === 'score' ? 'bg-amber-500 text-stone-950 font-bold' : 'text-stone-300 hover:text-white'
-                  }`}
-                  title="Mostrar solo pentagrama clásico (ideal para Bandoneón y Piano)"
-                >
-                  Notas
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStaveProfile('default')}
-                  className={`px-2 py-0.5 rounded text-[11px] transition cursor-pointer ${
-                    staveProfile === 'default' ? 'bg-amber-500 text-stone-950 font-bold' : 'text-stone-300 hover:text-white'
-                  }`}
-                  title="Mostrar tablatura y pentagrama juntos"
-                >
-                  Ambos
-                </button>
-              </div>
-
-              {/* Zoom */}
-              <div className="flex items-center gap-1 bg-stone-800 rounded-lg p-0.5 border border-stone-700">
-                <button
-                  type="button"
-                  onClick={() => setZoomScale(Math.max(0.7, zoomScale - 0.1))}
-                  className="p-1 text-stone-300 hover:text-white transition cursor-pointer"
-                  title="Reducir tamaño"
-                >
-                  <ZoomOut className="w-3 h-3" />
-                </button>
-                <span className="font-mono text-[10px] text-stone-400 px-1">
-                  {Math.round(zoomScale * 100)}%
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setZoomScale(Math.min(1.5, zoomScale + 0.1))}
-                  className="p-1 text-stone-300 hover:text-white transition cursor-pointer"
-                  title="Aumentar tamaño"
-                >
-                  <ZoomIn className="w-3 h-3" />
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* Controles de Zoom para Modo Tango Histórico */}
-          {isTangoArchive && (
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 bg-stone-800 rounded-lg p-0.5 border border-stone-700">
-                <button
-                  type="button"
-                  onClick={() => setTangoZoom(Math.max(60, tangoZoom - 15))}
-                  className="p-1 text-stone-300 hover:text-white transition cursor-pointer"
-                  title="Reducir"
-                >
-                  <ZoomOut className="w-3 h-3" />
-                </button>
-                <span className="font-mono text-[10px] text-stone-400 px-1">
-                  {tangoZoom}%
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setTangoZoom(Math.min(180, tangoZoom + 15))}
-                  className="p-1 text-stone-300 hover:text-white transition cursor-pointer"
-                  title="Aumentar"
-                >
-                  <ZoomIn className="w-3 h-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTangoZoom(100)}
-                  className="p-1 text-stone-300 hover:text-white transition cursor-pointer text-[10px] font-mono"
-                  title="Resetear al 100%"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      <ScorePlaybackBar
+        isPlaying={isPlaying}
+        isAudioHistoricalPlaying={isAudioHistoricalPlaying}
+        onPlayPause={handlePlayPause}
+        onStop={handleStop}
+        currentTimeMs={currentTimeMs}
+        totalTimeMs={totalTimeMs}
+        currentBar={currentBar}
+        isTangoArchive={isTangoArchive}
+        audioCurrentTime={audioCurrentTime}
+        audioDuration={audioDuration}
+        effectiveScore={effectiveScore}
+        activeRecordingIndex={activeRecordingIndex}
+        onSelectRecording={(idx) => {
+          setActiveRecordingIndex(idx);
+          setIsAudioHistoricalPlaying(false);
+          if (audioHistoricalRef.current) {
+            audioHistoricalRef.current.currentTime = 0;
+          }
+        }}
+        audioHistoricalRef={audioHistoricalRef}
+        playbackSpeed={playbackSpeed}
+        onSpeedChange={handleSpeedChange}
+        isLooping={isLooping}
+        onToggleLoop={handleToggleLoop}
+        isMetronomeActive={isMetronomeActive}
+        onToggleMetronome={handleToggleMetronome}
+        staveProfile={staveProfile}
+        onStaveProfileChange={setStaveProfile}
+        zoomScale={zoomScale}
+        onZoomChange={setZoomScale}
+        tangoZoom={tangoZoom}
+        onTangoZoomChange={setTangoZoom}
+      />
 
       {/* ================= CONTENEDOR PRINCIPAL SCROLLEABLE ================= */}
       <div

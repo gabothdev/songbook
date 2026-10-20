@@ -7,7 +7,8 @@ import {
   searchSongsOnCifraClub as searchCC,
   getSongContentFromCifraClub as getCCContent,
 } from '../services/scraper.js';
-import { getChordifyBeatGrid, searchSongsOnChordify } from '../services/chordify-scraper.js';
+import { getChordifyBeatGrid, searchSongsOnChordify, checkChordifyLyrics } from '../services/chordify-scraper.js';
+import { searchYouTubeMusic } from '../services/youtube.js';
 import prisma from '../services/db.js';
 import { exec } from 'child_process';
 import util from 'util';
@@ -151,20 +152,36 @@ router.get('/search/youtube', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ message: 'Query is required.' });
   try {
+    const candidates = await searchYouTubeMusic(query, { maxResults: 8 });
+
+    if (candidates.length > 0) {
+      const videoOptions = candidates.map((item) => ({
+        videoId: item.videoId,
+        title: item.title,
+        artist: item.artist,
+        thumbnail: item.thumbnail,
+        url: item.url,
+        duration: item.duration,
+      }));
+
+      return res.json({
+        videoId: candidates[0].videoId,
+        options: videoOptions,
+      });
+    }
+
+    // Fallback de contingencia si el filtro estricto no arrojó candidatos
     const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-    
-    // Fetch HTML from YouTube search page
     const response = await axios.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': 'es,en;q=0.9',
       },
       timeout: 6000,
     });
 
     const html = response.data;
-    
-    // Find all occurrences of "videoId":"XXXXXXXXXXX"
     const regex = /"videoId":\s*"([^"]{11})"/g;
     const matches = [];
     let match;
@@ -172,11 +189,10 @@ router.get('/search/youtube', async (req, res) => {
       if (!matches.includes(match[1])) {
         matches.push(match[1]);
       }
-      if (matches.length >= 6) break;
+      if (matches.length >= 4) break;
     }
 
     if (matches.length > 0) {
-      // Obtener metadatos rápidos de las primeras 4 opciones
       const topIds = matches.slice(0, 4);
       const videoOptions = await Promise.all(
         topIds.map(async (vId) => {
@@ -191,13 +207,13 @@ router.get('/search/youtube', async (req, res) => {
         })
       );
 
-      res.json({
+      return res.json({
         videoId: matches[0],
         options: videoOptions,
       });
-    } else {
-      res.status(404).json({ message: 'No se encontraron videos.', options: [] });
     }
+
+    res.status(404).json({ message: 'No se encontraron videos.', options: [] });
   } catch (error) {
     console.error('[API YouTube] Error al buscar video:', error.message);
     res.status(500).json({ message: `Error en el servidor al buscar video: ${error.message}`, options: [] });
@@ -253,6 +269,20 @@ router.get('/search/chordify', async (req, res) => {
   }
 });
 
+router.post('/chordify/check-lyrics', async (req, res) => {
+  const { youtubeIds } = req.body;
+  if (!Array.isArray(youtubeIds)) {
+    return res.status(400).json({ message: 'youtubeIds must be an array.' });
+  }
+  try {
+    const results = await checkChordifyLyrics(youtubeIds);
+    res.json({ results });
+  } catch (error) {
+    console.error('[API Chordify] Error al verificar letras:', error.message);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 
 // --- Ruta de Contenido Unificada ---
 
@@ -287,7 +317,7 @@ router.get('/content', async (req, res) => {
 
 // --- Ruta de Transcripción de YouTube con IA ---
 router.post('/transcribe/youtube', async (req, res) => {
-  const { youtubeId, method = 'chordify' } = req.body;
+  const { youtubeId, method = 'chordify', title: reqTitle, artist: reqArtist } = req.body;
   if (!youtubeId) {
     return res.status(400).json({ message: 'El parámetro youtubeId es requerido.' });
   }
@@ -308,6 +338,7 @@ router.post('/transcribe/youtube', async (req, res) => {
       return res.json({
         status: "success",
         cached: true,
+        id: existingSong.id,
         bpm: bpmValue,
         title: existingSong.title,
         artist: existingSong.artist,
@@ -318,19 +349,27 @@ router.post('/transcribe/youtube', async (req, res) => {
 
     let bpm = 120, compases = [], customText = null, barLength = 4;
     let scrapeSuccess = false;
-    let songTitle = 'Canción de YouTube';
-    let songArtist = 'Artista';
+    let songTitle = reqTitle || 'Canción de YouTube';
+    let songArtist = reqArtist || 'Artista';
 
     // 2. Si el método es chordify, ejecutar scraping de acordes y BeatGrid
     if (method === 'chordify') {
       try {
         console.log(`[IA Transcribe] Ejecutando scraper de Chordify...`);
-        const chordifyResult = await getChordifyBeatGrid(youtubeId);
+        const chordifyResult = await getChordifyBeatGrid(youtubeId, reqTitle, reqArtist);
         bpm = chordifyResult.bpm || 120;
         compases = chordifyResult.compases || [];
         barLength = chordifyResult.barLength || 4;
-        if (chordifyResult.title) songTitle = chordifyResult.title;
-        if (chordifyResult.artist) songArtist = chordifyResult.artist;
+        if (reqTitle) {
+          songTitle = reqTitle;
+        } else if (chordifyResult.title && !/^chordify$/i.test(chordifyResult.title)) {
+          songTitle = chordifyResult.title;
+        }
+        if (reqArtist) {
+          songArtist = reqArtist;
+        } else if (chordifyResult.artist) {
+          songArtist = chordifyResult.artist;
+        }
         if (chordifyResult.leadSheetText) {
           customText = chordifyResult.leadSheetText;
         }
@@ -432,6 +471,7 @@ router.post('/transcribe/youtube', async (req, res) => {
     res.json({
       status: "success",
       cached: false,
+      id: song.id,
       bpm,
       title: songTitle,
       artist: songArtist,

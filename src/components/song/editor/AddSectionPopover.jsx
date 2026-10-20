@@ -16,14 +16,12 @@ export default function AddSectionPopover({
 }) {
   const [tab, setTab] = useState('vocal'); // 'vocal' | 'instrumental'
   const [customName, setCustomName] = useState('');
-  const [selectedTimeSig, setSelectedTimeSig] = useState('4/4');
 
   const handleCustomSubmit = (e) => {
     e.preventDefault();
     if (customName.trim()) {
       onAddSection(customName.trim(), atIndex, {
         isInstrumental: tab === 'instrumental',
-        timeSignature: selectedTimeSig,
       });
       setCustomName('');
     }
@@ -32,7 +30,6 @@ export default function AddSectionPopover({
   const handleSelectPreset = (presetName, isInst = false) => {
     onAddSection(presetName, atIndex, {
       isInstrumental: isInst,
-      timeSignature: selectedTimeSig,
     });
   };
 
@@ -83,29 +80,6 @@ export default function AddSectionPopover({
         </button>
       </div>
 
-      {/* Time Signature Selector for Instrumental */}
-      {tab === 'instrumental' && (
-        <div className="flex items-center justify-between bg-amber-50/80 p-2 rounded-xl border border-amber-200/80 text-xs">
-          <span className="font-mono text-[11px] font-bold text-amber-900">Métrica:</span>
-          <div className="flex items-center gap-1">
-            {['4/4', '2/4', '3/4', '6/8'].map((ts) => (
-              <button
-                key={ts}
-                type="button"
-                onClick={() => setSelectedTimeSig(ts)}
-                className={`px-2 py-0.5 rounded-md font-mono text-xs font-bold transition-all cursor-pointer ${
-                  selectedTimeSig === ts
-                    ? 'bg-amber-700 text-white shadow-xs'
-                    : 'bg-white text-stone-700 border border-stone-200 hover:bg-stone-50'
-                }`}
-              >
-                {ts}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Custom Name Input */}
       <form onSubmit={handleCustomSubmit} className="flex items-center gap-1">
         <input
@@ -142,9 +116,7 @@ export default function AddSectionPopover({
                   className="px-2 py-1 rounded-lg text-left text-xs font-serif transition-colors truncate cursor-pointer bg-stone-50 hover:bg-amber-100 text-stone-800 hover:text-amber-950 border border-stone-200/70 flex items-center justify-between"
                 >
                   <span className="truncate">{p.name}</span>
-                  <span className="font-mono text-[10px] text-amber-800 font-bold ml-1">
-                    {selectedTimeSig}
-                  </span>
+                  <Music2 className="w-3 h-3 text-amber-700 flex-shrink-0 ml-1" />
                 </button>
               ))
             : SECTION_TYPES.map((st) => (

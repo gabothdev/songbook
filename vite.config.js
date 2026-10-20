@@ -17,8 +17,26 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          if (id.includes('@coderline/alphatab')) {
+            return 'vendor-alphatab';
+          }
+          if (id.includes('tone') || id.includes('tonejs-instrument')) {
+            return 'vendor-tone';
+          }
+          if (id.includes('framer-motion') || id.includes('lucide-react')) {
+            return 'vendor-ui';
+          }
+        },
+      },
+    },
+  },
   test: {
-    include: ['src/**/*.{test,spec}.{js,jsx}'],
+    include: ['src/**/*.{test,spec}.{js,jsx,ts,tsx}', 'server/**/*.{test,spec}.{js,ts}'],
     environment: 'node',
   },
 });

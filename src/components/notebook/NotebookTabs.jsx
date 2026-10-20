@@ -42,20 +42,12 @@ export default function NotebookTabs({ activeTab, onTabChange, mode = 'auth' }) 
       bgInactive: 'bg-[#fef9c3]/85 text-stone-800 hover:bg-[#fef08a] border-amber-300/80',
       accentColor: 'bg-amber-600',
     },
-    {
-      id: 'scores',
-      label: t.tabScores || 'Partituras & Tabs',
-      icon: Music2,
-      bgActive: 'bg-[#bbf7d0] text-stone-950 border-emerald-400 shadow-lg',
-      bgInactive: 'bg-[#dcfce7]/85 text-stone-800 hover:bg-[#bbf7d0] border-emerald-300/80',
-      accentColor: 'bg-emerald-600',
-    },
   ];
 
   const TABS = mode === 'musician' ? MUSICIAN_TABS : AUTH_TABS;
 
   return (
-    <div className="absolute left-full top-12 sm:top-16 flex flex-col gap-3 z-30 -ml-1">
+    <div className="absolute left-full top-12 sm:top-16 flex flex-col gap-3 z-40 -ml-1">
       {TABS.map((tab) => {
         const Icon = tab.icon;
         const isActive = activeTab === tab.id;
@@ -63,6 +55,7 @@ export default function NotebookTabs({ activeTab, onTabChange, mode = 'auth' }) 
         return (
           <motion.button
             key={tab.id}
+            type="button"
             onClick={() => onTabChange(tab.id)}
             whileHover={{ x: 3 }}
             whileTap={{ scale: 0.97 }}

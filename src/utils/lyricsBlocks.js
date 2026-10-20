@@ -31,6 +31,8 @@ export const INSTRUMENTAL_PRESETS = [
 export const SECTION_KEYWORDS =
   /^(intro|verse|verso|estrofa|prechorus|pre-chorus|precoro|pre-coro|chorus|coro|estribillo|bridge|puente|solo|outro|final|coda|hook|interlude|interludio|part|parte|seccion|sección|tema|acapella|instrumental|bloque|bpm|beats|time)/i;
 
+export const SYLLABLE_JOINER = '\u200D';
+
 /**
  * Parses raw text with [Section] and [Chord] tags into structured visual blocks,
  * including prefixChords (pickup/anacrusa), words/syllables, and suffixChords (remate/out).
@@ -42,6 +44,7 @@ export function parseLyricsToVisualBlocks(rawText) {
   const alignedText = alignChordsWithLyrics(rawText);
   const lines = alignedText.split('\n');
   const sections = [];
+  const metadataTags = [];
   let currentSection = {
     id: `sec_${Date.now()}_0`,
     name: 'Intro',
@@ -60,7 +63,7 @@ export function parseLyricsToVisualBlocks(rawText) {
       /^\[\s*([a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s\-_/]+?)(?:\s*@\s*([0-9:.]+))?\s*\]$/
     );
     const innerName = headerMatch ? headerMatch[1].trim() : '';
-    const isMetadata = /^(bpm|beats|time|timesignature|metro)$/i.test(innerName);
+    const isMetadata = /^(bpm|beats|time|timesignature|metro)\b/i.test(innerName);
     const isSection =
       headerMatch &&
       !isMetadata &&
@@ -69,6 +72,7 @@ export function parseLyricsToVisualBlocks(rawText) {
         !/^[A-G][b#]?(?:m|maj|min|dim|aug|sus|add|\d|M|\/|[A-G][b#]?)*$/i.test(innerName));
 
     if (isMetadata) {
+      metadataTags.push(trimmed);
       return;
     }
 
@@ -93,7 +97,10 @@ export function parseLyricsToVisualBlocks(rawText) {
       if (!part) return;
       if (part.startsWith('[') && part.endsWith(']')) {
         const chord = part.slice(1, -1).trim();
-        if (/^(?:BPM|Beats|Time|TimeSignature|Metro)/i.test(chord)) return;
+        if (/^(?:BPM|Beats|Time|TimeSignature|Metro)\b/i.test(chord)) {
+          metadataTags.push(part.trim());
+          return;
+        }
         tokens.push({
           type: 'chord',
           chord: normalizeChordName(chord),
@@ -106,12 +113,13 @@ export function parseLyricsToVisualBlocks(rawText) {
       }
     });
 
-    // Determine if the line has any text characters (excluding spaces)
+    // Determine if the line has any text characters (excluding spaces and zero-width syllable joiner)
+    const hasRealText = (str) => str.replace(/\u200D/g, '').trim().length > 0;
     const firstTextIdx = tokens.findIndex(
-      (t) => t.type === 'text' && t.text.trim().length > 0
+      (t) => t.type === 'text' && hasRealText(t.text)
     );
     const lastTextIdx = tokens.reduce(
-      (acc, t, idx) => (t.type === 'text' && t.text.trim().length > 0 ? idx : acc),
+      (acc, t, idx) => (t.type === 'text' && hasRealText(t.text) ? idx : acc),
       -1
     );
 
@@ -165,7 +173,7 @@ export function parseLyricsToVisualBlocks(rawText) {
     middleTokens.forEach((tok) => {
       if (tok.type === 'chord') {
         if (pendingChord) {
-          // If a chord was pending and another chord comes without text, push as prefix or space chord
+          // If a chord was pending and another chord comes without text, push as space chord
           parsedWords.push({
             id: `w_${Math.random().toString(36).substring(2, 8)}`,
             type: 'word',
@@ -176,20 +184,25 @@ export function parseLyricsToVisualBlocks(rawText) {
         pendingChord = tok.chord;
       } else {
         // tok.type === 'text'
-        // Handle words and whitespace
+        // Handle words, whitespace, and explicit syllable splits (SYLLABLE_JOINER)
         const subParts = tok.text.split(/(\s+)/);
         subParts.forEach((sp) => {
           if (!sp) return;
           if (/^\s+$/.test(sp)) {
             parsedWords.push({ type: 'space', text: sp });
           } else {
-            parsedWords.push({
-              id: `w_${Math.random().toString(36).substring(2, 8)}`,
-              type: 'word',
-              text: sp,
-              chord: pendingChord,
+            const syllableParts = sp.split(SYLLABLE_JOINER).filter((s) => s.length > 0);
+            syllableParts.forEach((syl, sIdx) => {
+              parsedWords.push({
+                id: `w_${Math.random().toString(36).substring(2, 8)}`,
+                type: 'word',
+                text: syl,
+                chord: sIdx === 0 ? pendingChord : null,
+              });
+              if (sIdx === 0) {
+                pendingChord = null;
+              }
             });
-            pendingChord = null;
           }
         });
       }
@@ -201,6 +214,20 @@ export function parseLyricsToVisualBlocks(rawText) {
         chord: pendingChord,
       });
       pendingChord = null;
+    }
+
+    // Mark adjacent non-space word tokens as connected syllables (e.g. from ca[G]mino or ca\u200Dmino)
+    for (let i = 0; i < parsedWords.length; i++) {
+      const curr = parsedWords[i];
+      if (curr.type !== 'word' || curr.text === ' ') continue;
+      const prev = i > 0 ? parsedWords[i - 1] : null;
+      const next = i < parsedWords.length - 1 ? parsedWords[i + 1] : null;
+      const isPrevWord = prev && prev.type === 'word' && prev.text !== ' ';
+      const isNextWord = next && next.type === 'word' && next.text !== ' ';
+      if (isPrevWord || isNextWord) {
+        curr.isSyllable = true;
+        curr.canMergeWithNext = Boolean(isNextWord);
+      }
     }
 
     if (parsedWords.length > 0 || prefixChords.length > 0 || suffixChords.length > 0) {
@@ -217,14 +244,29 @@ export function parseLyricsToVisualBlocks(rawText) {
     sections.push(currentSection);
   }
 
+  if (metadataTags.length > 0 && sections.length > 0) {
+    sections[0].metadataTags = metadataTags;
+  }
+
   return sections;
 }
 
 /**
- * Reconstructs raw text from visual sections, words, prefixChords and suffixChords
+ * Reconstructs raw text from visual sections, words, prefixChords and suffixChords.
+ * Preserves metadata headers ([BPM @ ...]) and connected syllable splits.
  */
-export function reconstructTextFromBlocks(sections) {
+export function reconstructTextFromBlocks(sections, options = {}) {
+  if (!sections || sections.length === 0) return '';
+  const { stripSyllableJoiners = false } = options;
+
   let output = '';
+
+  // 1. Preserve top-level metadata headers ([BPM @ 120], [Beats @ 4], etc.)
+  const metadataTags = sections[0]?.metadataTags;
+  if (Array.isArray(metadataTags) && metadataTags.length > 0) {
+    output += metadataTags.join('\n') + '\n\n';
+  }
+
   sections.forEach((sec) => {
     const validLines = sec.lines.filter(
       (line) =>
@@ -234,7 +276,7 @@ export function reconstructTextFromBlocks(sections) {
           (line.suffixChords && line.suffixChords.length > 0))
     );
 
-    if (validLines.length === 0 && sec.name === 'Intro') {
+    if (validLines.length === 0 && sec.name === 'Intro' && sections.length > 1) {
       return;
     }
 
@@ -251,12 +293,18 @@ export function reconstructTextFromBlocks(sections) {
 
       // 2. Middle words and syllables
       if (line.words && line.words.length > 0) {
-        line.words.forEach((item) => {
+        line.words.forEach((item, idx) => {
           if (item.type === 'space') {
             lineStr += item.text;
           } else if (item.type === 'word') {
+            const prev = idx > 0 ? line.words[idx - 1] : null;
+            const isConnectedSyllable =
+              prev && prev.type === 'word' && prev.text !== ' ' && item.text !== ' ';
+
             if (item.chord) {
               lineStr += `[${item.chord}]${item.text}`;
+            } else if (isConnectedSyllable && !stripSyllableJoiners) {
+              lineStr += `${SYLLABLE_JOINER}${item.text}`;
             } else {
               lineStr += item.text;
             }
@@ -292,7 +340,7 @@ export function isInstrumentalSong(sections, isExplicitInstrumental = false) {
   sections.forEach((sec) => {
     sec.lines.forEach((line) => {
       line.words?.forEach((w) => {
-        if (w.type === 'word' && w.text.trim() && w.text !== ' ') {
+        if (w.type === 'word' && w.text.replace(/\u200D/g, '').trim() && w.text !== ' ') {
           wordCount++;
         }
       });
@@ -319,6 +367,7 @@ export function splitWordAtChar(words, wordId, splitCharIndex) {
         text: firstPart,
         chord: item.chord, // preserve original chord on first syllable
         isSyllable: true,
+        canMergeWithNext: true,
       });
 
       newWords.push({
@@ -327,6 +376,7 @@ export function splitWordAtChar(words, wordId, splitCharIndex) {
         text: secondPart,
         chord: null, // second syllable ready for new chord
         isSyllable: true,
+        canMergeWithNext: Boolean(item.canMergeWithNext),
       });
     } else {
       newWords.push(item);
@@ -346,12 +396,18 @@ export function mergeSyllableWithNext(words, wordId) {
   const next = words[idx + 1];
 
   if (current.type === 'word' && next.type === 'word') {
+    const afterNext = idx + 2 < words.length ? words[idx + 2] : null;
+    const beforeCurrent = idx > 0 ? words[idx - 1] : null;
+    const stillConnectedAfter = afterNext && afterNext.type === 'word' && afterNext.text !== ' ';
+    const stillConnectedBefore = beforeCurrent && beforeCurrent.type === 'word' && beforeCurrent.text !== ' ';
+
     const merged = {
       id: current.id,
       type: 'word',
       text: `${current.text}${next.text}`,
       chord: current.chord || next.chord,
-      isSyllable: false,
+      isSyllable: Boolean(stillConnectedBefore || stillConnectedAfter),
+      canMergeWithNext: Boolean(stillConnectedAfter),
     };
     const newWords = [...words];
     newWords.splice(idx, 2, merged);

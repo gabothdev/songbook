@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
-import { Disc3, Plus, Music2 } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Disc3, Plus, Music2, Sliders, X, Minus, Edit3 } from 'lucide-react';
 
 /**
  * BeatGrid Component for SongBook
@@ -19,11 +20,18 @@ export default function BeatGrid({
   onUpdateChord = null,
   onAddMeasure = null,
   onSetTimestamp = null,
+  onChangeMeasureLength = null,
   currentTime = null,
+  activeStampChord = null,
+  uniqueChords = [],
 }) {
   const activeCellRef = useRef(null);
   const ribbonScrollRef = useRef(null);
   const [activeDropCellIdx, setActiveDropCellIdx] = useState(null);
+  const [editingMeasure, setEditingMeasure] = useState(null); // { measureIdx, compas }
+  const [editingBeatCell, setEditingBeatCell] = useState(null); // { cellGlobalIndex, currentChord, beatNum, measure }
+  const [customBeatChordInput, setCustomBeatChordInput] = useState('');
+  const [measureScope, setMeasureScope] = useState('single'); // 'single' | 'section' | 'from_here' | 'all'
 
   // Scrubber drag state & refs for fixed center needle
   const isDraggingMarkerRef = useRef(false);
@@ -331,6 +339,27 @@ export default function BeatGrid({
       }
     };
 
+    const openBeatChordModal = (e) => {
+      if (e) e.stopPropagation();
+      if (!isEditMode || !onUpdateChord) return;
+      setEditingBeatCell({
+        cellGlobalIndex,
+        currentChord: chord || '',
+        beatNum,
+        measure,
+      });
+      setCustomBeatChordInput(chord && chord !== '𝄾' && chord !== '𝄽' ? chord : '');
+    };
+
+    const handleCellClick = () => {
+      if (isEditMode && activeStampChord && onUpdateChord) {
+        onUpdateChord(cellGlobalIndex, activeStampChord);
+        if (onBeatClick) onBeatClick(activeStampChord, cellGlobalIndex, measure, true);
+        return;
+      }
+      if (onBeatClick) onBeatClick(chord, cellGlobalIndex, measure);
+    };
+
     return (
       <div
         key={cellGlobalIndex}
@@ -342,10 +371,11 @@ export default function BeatGrid({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onClick={() => onBeatClick && onBeatClick(chord, cellGlobalIndex, measure)}
+        onClick={handleCellClick}
+        onDoubleClick={openBeatChordModal}
         className={`
-          relative flex-1 flex flex-col items-center justify-center transition-all select-none
-          ${isDraggable ? 'cursor-grab active:cursor-grabbing hover:ring-2 hover:ring-amber-400' : 'cursor-pointer'}
+          group/beat relative flex-1 flex flex-col items-center justify-center transition-all select-none
+          ${isEditMode && activeStampChord ? 'cursor-crosshair hover:ring-2 hover:ring-amber-500' : isDraggable ? 'cursor-grab active:cursor-grabbing hover:ring-2 hover:ring-amber-400' : 'cursor-pointer'}
           ${isRibbon ? 'h-14 sm:h-16 px-1' : 'aspect-square p-1 rounded-lg'}
           ${
             isActive
@@ -362,15 +392,27 @@ export default function BeatGrid({
           }
         `}
         title={
-          isDraggable
-            ? `Arrastra [${displayChord}] hacia la letra en la página izquierda`
+          isEditMode && activeStampChord
+            ? `Clic para estampar [${activeStampChord}] en este pulso`
+            : isEditMode
+            ? `Clic para ir al pulso • Doble clic para cambiar acorde${isDraggable ? ` • Arrastra [${displayChord}] hacia la letra` : ''}`
             : isSynced
             ? `Compás sincronizado @ ${measure?.secTime}s`
-            : isEditMode
-            ? 'Clic para cambiar o suelta un acorde aquí'
             : undefined
         }
       >
+        {/* Subtle hover edit button in Edit Mode when not stamping */}
+        {isEditMode && onUpdateChord && !activeStampChord && (
+          <button
+            type="button"
+            onClick={openBeatChordModal}
+            className="opacity-0 group-hover/beat:opacity-100 transition-opacity absolute top-0.5 right-0.5 p-0.5 rounded bg-stone-200/80 hover:bg-amber-200 text-stone-600 hover:text-amber-950 z-10 cursor-pointer"
+            title="Cambiar acorde de este pulso"
+          >
+            <Edit3 className="w-2.5 h-2.5" />
+          </button>
+        )}
+
         {/* Chord Symbol or Subtle Pulse Dot */}
         {displayChord ? (
           <div className="relative flex items-center justify-center">
@@ -452,9 +494,21 @@ export default function BeatGrid({
       >
         {/* Compact Measure Header */}
         <div className="bg-[#ede7df] px-2 py-0.5 border-b border-stone-300/70 flex items-center justify-between text-[10px] select-none">
-          <span className="font-mono font-black text-stone-700 text-[10px]">
-            C.{compas.id || mIdx + 1}
-          </span>
+          {isEditMode && onChangeMeasureLength ? (
+            <button
+              type="button"
+              onClick={() => setEditingMeasure({ measureIdx: mIdx, compas })}
+              className="font-mono font-black text-stone-700 hover:text-amber-900 hover:bg-amber-100/80 rounded px-1 -mx-1 text-[10px] cursor-pointer flex items-center gap-1 transition-colors"
+              title="Clic para cambiar métrica / pulsos del compás (Ripple Shift)"
+            >
+              <span>C.{compas.id || mIdx + 1}</span>
+              <Sliders className="w-2.5 h-2.5 text-stone-400 hover:text-amber-700" />
+            </button>
+          ) : (
+            <span className="font-mono font-black text-stone-700 text-[10px]">
+              C.{compas.id || mIdx + 1}
+            </span>
+          )}
           {isSynced ? (
             <span
               className="inline-flex items-center gap-1 text-[9px] font-mono font-bold text-emerald-900 bg-emerald-100/90 px-1 py-0.2 rounded border border-emerald-300 shadow-2xs"
@@ -481,6 +535,327 @@ export default function BeatGrid({
     );
   };
 
+  // Cerrar el modal con tecla Escape
+  useEffect(() => {
+    if (!editingMeasure && !editingBeatCell) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setEditingMeasure(null);
+        setEditingBeatCell(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [editingMeasure, editingBeatCell]);
+
+  /**
+   * Modal para cambiar el acorde de un pulso específico de la BeatGrid
+   */
+  const renderBeatChordModal = () => {
+    if (!editingBeatCell) return null;
+    if (typeof document === 'undefined' || !document.body) return null;
+
+    const applyChordToBeat = (newChord) => {
+      if (onUpdateChord) {
+        onUpdateChord(editingBeatCell.cellGlobalIndex, newChord);
+      }
+      setEditingBeatCell(null);
+    };
+
+    const availableChords = Array.from(
+      new Set([...(uniqueChords || []), ...(flatChords || []).filter((c) => c && c !== '𝄾' && c !== '𝄽')])
+    );
+
+    return createPortal(
+      <div
+        className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs select-none animate-in fade-in duration-150"
+        onClick={() => setEditingBeatCell(null)}
+      >
+        <div
+          className="relative w-full max-w-xs bg-[#fcfaf6] rounded-2xl border-2 border-stone-300 shadow-2xl p-4.5 space-y-3.5 paper-texture animate-in fade-in zoom-in-95 duration-150 z-10"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-stone-200/80 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-amber-100 text-amber-800">
+                <Music2 className="w-4 h-4" />
+              </span>
+              <div>
+                <h4 className="text-xs font-bold text-stone-900 font-sans">
+                  Editar Pulso #{editingBeatCell.beatNum}
+                </h4>
+                <p className="text-[10px] text-stone-500 font-mono">
+                  {editingBeatCell.measure?.seccion || 'Tema'} • Compás #{editingBeatCell.measure?.id || 1}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEditingBeatCell(null)}
+              className="p-1 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-200/50 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Song Chords Quick Grid */}
+          {availableChords.length > 0 && (
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                Acordes de la canción
+              </label>
+              <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1">
+                {availableChords.map((c) => {
+                  const isCurrent = editingBeatCell.currentChord === c;
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => applyChordToBeat(c)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold border transition-all cursor-pointer ${
+                        isCurrent
+                          ? 'bg-amber-600 text-white border-amber-700 shadow-xs'
+                          : 'bg-white hover:bg-amber-50 text-stone-800 border-stone-200'
+                      }`}
+                    >
+                      {c}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Custom Chord Input */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (customBeatChordInput.trim()) {
+                applyChordToBeat(customBeatChordInput.trim());
+              }
+            }}
+            className="space-y-1.5 pt-1 border-t border-stone-200/60"
+          >
+            <label className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+              Otro acorde personalizado
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={customBeatChordInput}
+                onChange={(e) => setCustomBeatChordInput(e.target.value)}
+                placeholder="Ej: F#m7, Bbmaj7..."
+                className="flex-1 px-2.5 py-1.5 bg-white border border-stone-300 rounded-lg text-xs font-mono text-stone-800 focus:outline-none focus:border-amber-500"
+                autoFocus
+              />
+              <button
+                type="submit"
+                disabled={!customBeatChordInput.trim()}
+                className="px-3 py-1.5 bg-amber-700 hover:bg-amber-800 disabled:opacity-40 text-white rounded-lg text-xs font-bold font-sans cursor-pointer transition-colors"
+              >
+                Aplicar
+              </button>
+            </div>
+          </form>
+
+          {/* Silence / Clear Beat Action */}
+          <div className="flex items-center justify-between pt-2 border-t border-stone-200/60">
+            <button
+              type="button"
+              onClick={() => applyChordToBeat('𝄾')}
+              className="w-full py-1.5 px-3 bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 rounded-lg text-[11px] font-bold font-sans cursor-pointer transition-colors"
+            >
+              𝄾 Marcar como Silencio / Vaciar pulso
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  };
+
+  /**
+   * Modal / Popover para cambiar la métrica y duración del compás, sección o canción completa
+   */
+  const renderMeasureModal = () => {
+    if (!editingMeasure) return null;
+    if (typeof document === 'undefined' || !document.body) return null;
+    const currentLen = editingMeasure.compas.acordes?.length || 4;
+    const sectionName = editingMeasure.compas.seccion || 'Tema';
+
+    const scopeOptions = [
+      { id: 'single', label: 'Solo este compás', desc: 'Ajusta este compás con Ripple Shift' },
+      { id: 'section', label: `Sección (${sectionName})`, desc: 'Cambia métrica de esta sección' },
+      { id: 'from_here', label: 'Desde aquí al final', desc: 'Reagrupa desde este compás en adelante' },
+      { id: 'all', label: 'Toda la canción', desc: 'Reagrupa toda la canción en esta métrica' },
+    ];
+
+    return createPortal(
+      <div
+        className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs select-none animate-in fade-in duration-150"
+        onClick={() => setEditingMeasure(null)}
+      >
+        <div
+          className="relative w-full max-w-xs bg-[#fcfaf6] rounded-2xl border-2 border-stone-300 shadow-2xl p-4.5 space-y-3.5 paper-texture animate-in fade-in zoom-in-95 duration-150 z-10"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-stone-200/80 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-amber-100 text-amber-800">
+                <Sliders className="w-4 h-4" />
+              </span>
+              <div>
+                <h4 className="text-xs font-bold text-stone-900 font-sans">
+                  Compás #{editingMeasure.compas.id || editingMeasure.measureIdx + 1}
+                </h4>
+                <p className="text-[10px] text-stone-500 font-mono">
+                  {sectionName} • {currentLen} tiempos
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEditingMeasure(null)}
+              className="p-1 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-200/50 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Alcance del cambio de métrica */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+              Aplicar a
+            </label>
+            <div className="grid grid-cols-2 gap-1.5">
+              {scopeOptions.map((opt) => {
+                const isSelected = measureScope === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setMeasureScope(opt.id)}
+                    title={opt.desc}
+                    className={`px-2 py-1.5 rounded-lg text-left border text-[10px] font-sans font-bold transition-all cursor-pointer truncate ${
+                      isSelected
+                        ? 'bg-amber-800 text-amber-50 border-amber-900 shadow-2xs'
+                        : 'bg-stone-100 hover:bg-stone-200/70 border-stone-200 text-stone-700'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Metric Presets */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+              Seleccionar Métrica
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { len: 4, label: '4/4', sub: '4 tiempos' },
+                { len: 3, label: '3/4', sub: '3 tiempos' },
+                { len: 2, label: '2/4', sub: '2 tiempos' },
+                { len: 6, label: '6/8', sub: '6 tiempos' },
+              ].map((preset) => {
+                const isCurrent = currentLen === preset.len && measureScope === 'single';
+                return (
+                  <button
+                    key={preset.len}
+                    type="button"
+                    onClick={() => {
+                      if (onChangeMeasureLength) {
+                        onChangeMeasureLength(editingMeasure.measureIdx, preset.len, measureScope);
+                      }
+                      setEditingMeasure(null);
+                    }}
+                    className={`p-2 rounded-xl text-left border text-xs font-sans font-bold transition-all flex flex-col justify-between cursor-pointer ${
+                      isCurrent
+                        ? 'bg-amber-100 border-amber-500 text-amber-950 shadow-xs ring-1 ring-amber-300'
+                        : 'bg-white hover:bg-amber-50/60 border-stone-200 text-stone-800'
+                    }`}
+                  >
+                    <span className="font-mono text-xs font-black">{preset.label}</span>
+                    <span className="text-[9px] font-normal text-stone-500">{preset.sub}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Fine Adjustment +/- 1 tiempo */}
+          <div className="flex items-center justify-between pt-1 border-t border-stone-200/60">
+            <span className="text-[10px] font-sans font-semibold text-stone-600">
+              Ajuste fino:
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  if (currentLen > 1 && onChangeMeasureLength) {
+                    onChangeMeasureLength(editingMeasure.measureIdx, currentLen - 1, measureScope);
+                  }
+                  setEditingMeasure(null);
+                }}
+                disabled={currentLen <= 1}
+                className="px-2.5 py-1 bg-white hover:bg-stone-100 disabled:opacity-40 text-stone-700 border border-stone-200 rounded-lg text-[10px] font-bold flex items-center gap-1 shadow-2xs cursor-pointer"
+              >
+                <Minus className="w-3 h-3 text-stone-500" />
+                <span>-1 T</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onChangeMeasureLength) {
+                    onChangeMeasureLength(editingMeasure.measureIdx, currentLen + 1, measureScope);
+                  }
+                  setEditingMeasure(null);
+                }}
+                className="px-2.5 py-1 bg-white hover:bg-stone-100 text-stone-700 border border-stone-200 rounded-lg text-[10px] font-bold flex items-center gap-1 shadow-2xs cursor-pointer"
+              >
+                <Plus className="w-3 h-3 text-amber-700" />
+                <span>+1 T</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Scope / Ripple Shift info card */}
+          <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-2 flex items-start gap-2">
+            <span className="text-amber-600 text-xs mt-0.5">⚡</span>
+            <p className="text-[10px] text-amber-900 leading-tight">
+              {measureScope === 'all' && (
+                <>
+                  <strong>Toda la canción:</strong> Reagrupa todos los pulsos en la métrica elegida conservando tiempos del video y secciones.
+                </>
+              )}
+              {measureScope === 'section' && (
+                <>
+                  <strong>Por sección:</strong> Reagrupa solo <em>{sectionName}</em> en esta métrica sin alterar las demás secciones.
+                </>
+              )}
+              {measureScope === 'from_here' && (
+                <>
+                  <strong>Desde aquí:</strong> Reagrupa desde el compás #{editingMeasure.measureIdx + 1} hasta el final de la canción.
+                </>
+              )}
+              {measureScope === 'single' && (
+                <>
+                  <strong>Ripple Shift:</strong> Cambia solo este compás y desplaza los pulsos hacia adelante manteniendo sincronizado el video.
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  };
+
   if (!compases || compases.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center p-8 bg-stone-100/60 rounded-2xl border-2 border-dashed border-stone-300 text-stone-500 text-center space-y-2">
@@ -497,6 +872,8 @@ export default function BeatGrid({
   if (mode === 'ribbon') {
     return (
       <div className="space-y-2 w-full">
+        {renderMeasureModal()}
+        {renderBeatChordModal()}
         {/* Ribbon Horizontal Track */}
         <div className="relative w-full overflow-hidden rounded-2xl bg-[#1a120c] p-2.5 sm:p-3 border-2 border-amber-950/60 shadow-2xl">
           {/* Fixed Center Playhead Needle Indicator with Interactive Drag Scrubber */}
@@ -594,8 +971,12 @@ export default function BeatGrid({
   // ================= FULL SECTION GRID MODE =================
   return (
     <div className="space-y-4 max-h-[380px] xl:max-h-[440px] overflow-y-auto pr-1">
+      {renderMeasureModal()}
+      {renderBeatChordModal()}
       {sectionGroups.map((group, gIdx) => {
         const style = getSectionStyles(group.name);
+        const sectionDefaultBeats =
+          group.measures[group.measures.length - 1]?.acordes?.length || beatsPerMeasure || 4;
         return (
           <div
             key={`${group.name}_${gIdx}`}
@@ -615,9 +996,9 @@ export default function BeatGrid({
                 {isEditMode && onAddMeasure && (
                   <button
                     type="button"
-                    onClick={() => onAddMeasure(group.name, 4)}
+                    onClick={() => onAddMeasure(group.name, sectionDefaultBeats)}
                     className="px-2 py-0.5 bg-white hover:bg-stone-100 text-stone-700 rounded border border-stone-300 text-[10px] font-bold font-sans cursor-pointer shadow-2xs transition-colors flex items-center gap-1"
-                    title="Añadir un compás a esta sección"
+                    title={`Añadir un compás de ${sectionDefaultBeats} tiempos a esta sección`}
                   >
                     <Plus className="w-3 h-3 text-amber-700" />
                     <span>Compás</span>
@@ -634,7 +1015,19 @@ export default function BeatGrid({
                   className="p-1.5 bg-white/95 rounded-xl border border-stone-200 shadow-2xs space-y-1"
                 >
                   <div className="flex items-center justify-between text-[9px] font-mono text-stone-400 px-0.5">
-                    <span>Compás {measure.id || measure.globalIndex + 1}</span>
+                    {isEditMode && onChangeMeasureLength ? (
+                      <button
+                        type="button"
+                        onClick={() => setEditingMeasure({ measureIdx: measure.globalIndex, compas: measure })}
+                        className="font-mono font-black text-stone-700 hover:text-amber-900 hover:bg-amber-100/80 rounded px-1 -mx-1 text-[9px] cursor-pointer flex items-center gap-1 transition-colors"
+                        title="Clic para cambiar métrica / pulsos del compás (Ripple Shift)"
+                      >
+                        <span>Compás {measure.id || measure.globalIndex + 1}</span>
+                        <Sliders className="w-2.5 h-2.5 text-stone-400 hover:text-amber-700" />
+                      </button>
+                    ) : (
+                      <span>Compás {measure.id || measure.globalIndex + 1}</span>
+                    )}
                     {measure.secTime !== null && measure.secTime !== undefined ? (
                       <span className="inline-flex items-center gap-1 text-[9px] font-mono font-bold text-emerald-900 bg-emerald-100/90 px-1 py-0.2 rounded border border-emerald-300 shadow-2xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />

@@ -70,10 +70,12 @@ export function useYouTubeSync({
           name: secName,
           startMeasureIdx: idx,
           compasCount: 0,
+          beatCount: 0,
           startTime: compas.secTime !== undefined && compas.secTime !== null ? compas.secTime : null,
         };
       }
       currentBlock.compasCount++;
+      currentBlock.beatCount = (currentBlock.beatCount || 0) + (compas.acordes?.length || beatsPerMeasure);
     });
     if (currentBlock) {
       blocks.push(currentBlock);
@@ -96,7 +98,7 @@ export function useYouTubeSync({
       blocks.forEach((b) => {
         const beatDuration = 60 / (bpm || 100);
         b.startTime = offset + currentBeatOffset * beatDuration;
-        currentBeatOffset += b.compasCount * beatsPerMeasure;
+        currentBeatOffset += b.beatCount || b.compasCount * beatsPerMeasure;
       });
     } else {
       if (blocks[0].startTime === null) {
@@ -111,15 +113,15 @@ export function useYouTubeSync({
         const startTime = blocks[startIdx].startTime;
         const endTime = blocks[endIdx].startTime;
 
-        let totalCompases = 0;
+        let totalBlockBeats = 0;
         for (let j = startIdx; j < endIdx; j++) {
-          totalCompases += blocks[j].compasCount;
+          totalBlockBeats += blocks[j].beatCount || blocks[j].compasCount * beatsPerMeasure;
         }
 
-        let accumulatedCompases = 0;
+        let accumulatedBeats = 0;
         for (let j = startIdx + 1; j < endIdx; j++) {
-          accumulatedCompases += blocks[j - 1].compasCount;
-          const ratio = accumulatedCompases / totalCompases;
+          accumulatedBeats += blocks[j - 1].beatCount || blocks[j - 1].compasCount * beatsPerMeasure;
+          const ratio = accumulatedBeats / Math.max(1, totalBlockBeats);
           blocks[j].startTime = startTime + ratio * (endTime - startTime);
         }
       }
@@ -128,15 +130,15 @@ export function useYouTubeSync({
       const lastDefinedTime = blocks[lastDefinedIdx].startTime;
 
       const remainingTime = Math.max(10, totalDuration - lastDefinedTime);
-      let remainingCompases = 0;
+      let remainingBeats = 0;
       for (let j = lastDefinedIdx; j < blocks.length; j++) {
-        remainingCompases += blocks[j].compasCount;
+        remainingBeats += blocks[j].beatCount || blocks[j].compasCount * beatsPerMeasure;
       }
 
-      let accumulatedCompases = 0;
+      let accumulatedBeats = 0;
       for (let j = lastDefinedIdx + 1; j < blocks.length; j++) {
-        accumulatedCompases += blocks[j - 1].compasCount;
-        const ratio = accumulatedCompases / remainingCompases;
+        accumulatedBeats += blocks[j - 1].beatCount || blocks[j - 1].compasCount * beatsPerMeasure;
+        const ratio = accumulatedBeats / Math.max(1, remainingBeats);
         blocks[j].startTime = lastDefinedTime + ratio * remainingTime;
       }
     }
@@ -144,9 +146,20 @@ export function useYouTubeSync({
     let currentBeatOffset = 0;
     blocks.forEach((b) => {
       b.startBeatIdx = currentBeatOffset;
-      b.beatCount = b.compasCount * beatsPerMeasure;
+      if (!b.beatCount) {
+        b.beatCount = b.compasCount * beatsPerMeasure;
+      }
       currentBeatOffset += b.beatCount;
     });
+
+    // Ensure strictly monotonic start times across all timing blocks
+    for (let i = 1; i < blocks.length; i++) {
+      const prevBlock = blocks[i - 1];
+      const minEstimatedDuration = Math.max(0.2, (prevBlock.beatCount || prevBlock.compasCount * beatsPerMeasure) * (60 / (bpm || 100)) * 0.1);
+      if (blocks[i].startTime <= prevBlock.startTime) {
+        blocks[i].startTime = prevBlock.startTime + minEstimatedDuration;
+      }
+    }
 
     return blocks;
   }, [compases, bpm, offset, playerInstance, beatsPerMeasure]);
@@ -200,6 +213,9 @@ export function useYouTubeSync({
           break;
         }
       }
+      if (activeIdx === -1 && isPlaybackActive && time >= 0 && flatBeats[0].time <= 1.5) {
+        return 0;
+      }
       return activeIdx;
     }
 
@@ -222,12 +238,13 @@ export function useYouTubeSync({
     const blockEndTime = nextBlock ? nextBlock.startTime : blockStartTime + 60;
     const blockDuration = Math.max(0.1, blockEndTime - blockStartTime);
 
-    const elapsed = time - blockStartTime;
+    const elapsed = Math.max(0, time - blockStartTime);
     const beatRatio = Math.min(1.0, Math.max(0.0, elapsed / blockDuration));
 
-    const localBeatIdx = Math.floor(beatRatio * block.beatCount);
-    return block.startBeatIdx + localBeatIdx;
-  }, [currentTime, timingBlocks, compases, isPlaybackActive]);
+    const localBeatIdx = Math.min(Math.max(0, block.beatCount - 1), Math.floor(beatRatio * block.beatCount));
+    const targetBeat = block.startBeatIdx + localBeatIdx;
+    return totalBeats > 0 ? Math.min(totalBeats - 1, targetBeat) : targetBeat;
+  }, [currentTime, timingBlocks, compases, isPlaybackActive, totalBeats]);
 
   // Helper to jump to a specific beat and time in the video
   const jumpToBeat = useCallback((beatIdx) => {

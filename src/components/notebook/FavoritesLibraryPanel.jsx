@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Star,
@@ -6,537 +6,554 @@ import {
   Sparkles,
   Play,
   Plus,
-  Check,
+  Trash2,
   Music,
-  Database,
   X,
-  FileText,
-  Layers,
-  Loader2,
   Bookmark,
   Guitar,
-  ArrowRight
+  Flame,
+  Folder,
+  FolderPlus,
+  Check,
+  ArrowLeft,
+  ListMusic
 } from 'lucide-react';
 import AdBanner from '../monetization/AdBanner';
-import { scoresApi } from '../../services/scoresApi';
-
-const POPULAR_SEARCH_SUGGESTIONS = [
-  'Master of Puppets',
-  'Hotel California',
-  'Nothing Else Matters',
-  'Sultans of Swing',
-  'Stairway to Heaven',
-  'Sweet Child O\' Mine',
-  'Yesterday',
-  'Back in Black',
-];
 
 export default function FavoritesLibraryPanel({
   userSongs = [],
+  setlists = [],
+  activeLibraryFilter = 'all', // 'all' | 'favorites' | 'setlist'
+  activeSetlist = null,
   onOpenSong,
   onToggleFavorite,
-  activeSetlist = null,
+  onToggleSaveSong,
   onAddSongToSetlist,
+  onRemoveSongFromSetlist,
+  onDeleteSetlist,
+  onPlaySetlist,
   onOpenSearchModal,
+  onBackToAll,
   isPro = false,
-  onSelectScore,
-  savedScores = [],
 }) {
-  const [activeTab, setActiveTab] = useState('favorites'); // 'favorites' | 'all' | 'scores'
-  const [searchTerm, setSearchTerm] = useState('');
-  const [justAddedSongId, setJustAddedSongId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [confirmDeleteSetlist, setConfirmDeleteSetlist] = useState(false);
+  const [deletingSongId, setDeletingSongId] = useState(null);
+  const [openSetlistMenuSongId, setOpenSetlistMenuSongId] = useState(null);
 
-  // Estados para búsqueda de partituras Songsterr
-  const [scoreResults, setScoreResults] = useState([]);
-  const [isSearchingScores, setIsSearchingScores] = useState(false);
-  const [scoreSearchError, setScoreSearchError] = useState(null);
-
-  // Debounce para búsqueda en Songsterr cuando activeTab === 'scores'
-  useEffect(() => {
-    if (activeTab !== 'scores') return;
-    if (!searchTerm.trim()) {
-      setScoreResults([]);
-      setIsSearchingScores(false);
-      setScoreSearchError(null);
-      return;
+  // Seleccionar la colección base de canciones según el filtro activo
+  const baseSongs = useMemo(() => {
+    if (activeLibraryFilter === 'favorites') {
+      return userSongs.filter((s) => s.isFavorite);
     }
+    if (activeLibraryFilter === 'setlist') {
+      return activeSetlist?.songs || [];
+    }
+    // 'all': canciones guardadas (o todas si no se ha filtrado)
+    const saved = userSongs.filter((s) => s.isSaved !== false);
+    return saved.length > 0 ? saved : userSongs;
+  }, [activeLibraryFilter, activeSetlist, userSongs]);
 
-    const timer = setTimeout(async () => {
-      setIsSearchingScores(true);
-      setScoreSearchError(null);
-      try {
-        const results = await scoresApi.searchSongsterr(searchTerm);
-        setScoreResults(results || []);
-      } catch (err) {
-        console.error('Error al buscar en Songsterr:', err);
-        setScoreSearchError('No se pudo conectar con Songsterr.');
-      } finally {
-        setIsSearchingScores(false);
-      }
-    }, 350);
-
-    return () => clearTimeout(timer);
-  }, [searchTerm, activeTab]);
-
-  const favoriteSongs = userSongs.filter((s) => s.isFavorite);
-  const baseSongsList = activeTab === 'favorites' ? favoriteSongs : userSongs;
-
-  const filteredSongs = baseSongsList.filter((s) => {
-    const term = searchTerm.toLowerCase().trim();
-    if (!term) return true;
-    const artistNames = Array.isArray(s.artists) && s.artists.length > 0
-      ? s.artists.map((a) => a.name).join(' ')
-      : (s.artist || '');
-    return (
-      (s.title && s.title.toLowerCase().includes(term)) ||
-      artistNames.toLowerCase().includes(term) ||
-      (s.key && s.key.toLowerCase().includes(term))
-    );
-  });
-
-  const handleAddClick = (e, song) => {
-    e.stopPropagation();
-    if (!activeSetlist) return;
-    onAddSongToSetlist(activeSetlist.name, song);
-    setJustAddedSongId(song.id);
-    setTimeout(() => setJustAddedSongId(null), 1500);
-  };
-
-  const isSongInActiveSetlist = (songId) => {
-    if (!activeSetlist || !activeSetlist.songs) return false;
-    return activeSetlist.songs.some((s) => s.id === songId);
-  };
-
-  const handleSelectScoreItem = (song) => {
-    if (!onSelectScore) return;
-    onSelectScore({
-      songsterrId: song.songId,
-      title: song.title,
-      artist: song.artist,
-      defaultTrack: song.popularTrackGuitar ?? song.popularTrack ?? song.defaultTrack ?? 0,
-      tracks: song.tracks,
+  // Filtrado reactivo en tiempo real por título, artista o tono
+  const filteredSongs = useMemo(() => {
+    if (!searchQuery.trim()) return baseSongs;
+    const q = searchQuery.toLowerCase().trim();
+    return baseSongs.filter((s) => {
+      const artistNames = Array.isArray(s.artists) && s.artists.length > 0
+        ? s.artists.map((a) => a.name).join(' ')
+        : (s.artist || '');
+      return (
+        (s.title || '').toLowerCase().includes(q) ||
+        artistNames.toLowerCase().includes(q) ||
+        (s.key || '').toLowerCase().includes(q)
+      );
     });
-  };
-
-  const handleSelectSavedScoreItem = (saved) => {
-    if (!onSelectScore) return;
-    onSelectScore({
-      id: saved.id,
-      songsterrId: saved.songsterrId,
-      title: saved.title,
-      artist: saved.artist,
-      defaultTrack: saved.defaultTrack,
-      tracks: saved.tracks,
-      songData: saved.songData,
-    });
-  };
+  }, [baseSongs, searchQuery]);
 
   return (
-    <div className="h-full flex flex-col justify-between select-none">
-      <div>
-        {/* ================= HEADER ================= */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-          <div>
-            <h3 className="text-xl sm:text-2xl font-serif font-black text-stone-900 tracking-tight flex items-center gap-2">
-              <span>
-                {activeTab === 'favorites' && 'Canciones Favoritas'}
-                {activeTab === 'all' && 'Cancionero Completo'}
-                {activeTab === 'scores' && 'Partituras & Tablaturas'}
+    <div className="relative h-full flex flex-col justify-between select-none space-y-2.5">
+      {/* ================= ENCABEZADO SUPERIOR ================= */}
+      <div className="flex-shrink-0">
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <div className="flex items-center gap-2 min-w-0">
+            {activeLibraryFilter === 'setlist' ? (
+              <span className="font-mono text-[10px] sm:text-[11px] font-semibold text-amber-900 bg-amber-100/90 px-2.5 py-0.5 rounded-full border border-amber-300 uppercase tracking-wider flex items-center gap-1">
+                <Folder className="w-3 h-3 text-amber-700" />
+                <span>Repertorio</span>
               </span>
-              <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded-full border ${
-                activeTab === 'scores'
-                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                  : 'bg-amber-100 text-amber-900 border-amber-300'
-              }`}>
-                {activeTab === 'favorites' && favoriteSongs.length}
-                {activeTab === 'all' && userSongs.length}
-                {activeTab === 'scores' && 'Songsterr'}
+            ) : activeLibraryFilter === 'favorites' ? (
+              <span className="font-mono text-[10px] sm:text-[11px] font-semibold text-amber-900 bg-amber-100/90 px-2.5 py-0.5 rounded-full border border-amber-300 uppercase tracking-wider flex items-center gap-1">
+                <Star className="w-3 h-3 fill-amber-500 text-amber-600" />
+                <span>Favoritas</span>
               </span>
-            </h3>
-            <p className="text-xs font-sans text-stone-500 mt-0.5">
-              {activeTab === 'scores' ? (
-                'Toca cualquier tema para abrir la partitura completa en hoja blanca de atril'
-              ) : activeSetlist ? (
-                <span className="text-amber-900 font-medium">
-                  📌 Setlist abierto: <strong className="font-serif">{activeSetlist.name}</strong> (usa <strong className="text-amber-800">+</strong> para sumar temas)
-                </span>
-              ) : (
-                'Toca cualquier tema para abrir acordes, letra sincronizada y video'
-              )}
-            </p>
+            ) : (
+              <span className="font-mono text-[10px] sm:text-[11px] font-semibold text-amber-900 bg-amber-100/90 px-2.5 py-0.5 rounded-full border border-amber-300 uppercase tracking-wider flex items-center gap-1">
+                <Bookmark className="w-3 h-3 fill-amber-700 text-amber-700" />
+                <span>Mi Cancionero</span>
+              </span>
+            )}
+            <span className="text-[11px] font-mono text-stone-500 font-medium">
+              {filteredSongs.length} {filteredSongs.length === 1 ? 'canción' : 'canciones'}
+            </span>
           </div>
 
-          {activeTab !== 'scores' && (
+          {/* Acciones para cuando hay un Setlist activo */}
+          {activeLibraryFilter === 'setlist' && activeSetlist && (
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {baseSongs.length > 0 && onPlaySetlist && (
+                <button
+                  type="button"
+                  onClick={() => onPlaySetlist(activeSetlist)}
+                  className="px-2.5 py-1 bg-stone-900 hover:bg-black text-amber-200 rounded-lg font-sans font-bold text-[11px] shadow-xs flex items-center gap-1 cursor-pointer transition-all"
+                  title="Comenzar ensayo o show de este setlist"
+                >
+                  <Play className="w-3 h-3 fill-current" />
+                  <span>Tocar Set</span>
+                </button>
+              )}
+
+              {onDeleteSetlist && (
+                <AnimatePresence mode="wait">
+                  {confirmDeleteSetlist ? (
+                    <motion.div
+                      key="confirm"
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      className="flex items-center gap-1 bg-red-50 border border-red-300 rounded-lg px-2 py-0.5"
+                    >
+                      <span className="text-[10px] font-sans font-bold text-red-800">¿Eliminar?</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDeleteSetlist(activeSetlist.name);
+                          setConfirmDeleteSetlist(false);
+                        }}
+                        className="px-1.5 py-0.2 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold font-sans cursor-pointer"
+                      >
+                        Sí
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteSetlist(false)}
+                        className="px-1.5 py-0.2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded text-[10px] font-bold font-sans cursor-pointer"
+                      >
+                        No
+                      </button>
+                    </motion.div>
+                  ) : (
+                    <motion.button
+                      key="trash"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      type="button"
+                      onClick={() => setConfirmDeleteSetlist(true)}
+                      className="p-1 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                      title="Eliminar este setlist"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </motion.button>
+                  )}
+                </AnimatePresence>
+              )}
+            </div>
+          )}
+        </div>
+
+        <h2 className="text-lg sm:text-xl font-serif font-black text-stone-900 tracking-tight leading-tight truncate">
+          {activeLibraryFilter === 'setlist' && (activeSetlist?.name || 'Repertorio')}
+          {activeLibraryFilter === 'favorites' && 'Mis Canciones Favoritas'}
+          {activeLibraryFilter === 'all' && 'Mis Canciones Guardadas'}
+        </h2>
+        <p className="text-[11px] sm:text-xs font-sans text-stone-600 mt-0.5 truncate">
+          {activeLibraryFilter === 'setlist'
+            ? `Temas ordenados para "${activeSetlist?.name || 'el repertorio'}"`
+            : activeLibraryFilter === 'favorites'
+            ? 'Tus canciones con estrella para acceso rápido'
+            : 'Tu cuaderno personal con letras, acordes y configuraciones de tono'}
+        </p>
+      </div>
+
+      {/* ================= BUSCADOR RÁPIDO & INDICADOR ================= */}
+      <div className="flex-shrink-0 space-y-1">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-stone-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Buscar por canción, artista o tono en tu repertorio..."
+            className="w-full pl-8 pr-7 py-1.5 bg-white/90 focus:bg-white text-xs font-sans text-stone-800 placeholder-stone-400 rounded-xl border border-stone-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-400/20 shadow-2xs transition-all outline-none"
+          />
+          {searchQuery && (
             <button
               type="button"
-              onClick={onOpenSearchModal}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-700 to-amber-800 hover:from-amber-800 hover:to-amber-900 text-amber-50 rounded-xl font-sans font-bold text-xs shadow-sm transition-all cursor-pointer flex-shrink-0 self-start sm:self-auto"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 p-0.5 rounded cursor-pointer"
             >
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>Buscar en Web</span>
+              <X className="w-3 h-3" />
             </button>
           )}
         </div>
 
-        {/* ================= TABS SELECTOR & SEARCH BAR ================= */}
-        <div className="flex flex-col sm:flex-row gap-2 mb-3">
-          {/* Selector de Modos: Favoritas | Todas | Partituras */}
-          <div className="bg-stone-200/70 p-1 rounded-xl flex items-center shadow-inner self-start flex-shrink-0 gap-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('favorites');
-                setSearchTerm('');
-              }}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold font-sans transition-all flex items-center gap-1 cursor-pointer ${
-                activeTab === 'favorites'
-                  ? 'bg-white text-stone-900 shadow-sm'
-                  : 'text-stone-600 hover:text-stone-900'
-              }`}
-            >
-              <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
-              <span>Favoritas ({favoriteSongs.length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('all');
-                setSearchTerm('');
-              }}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold font-sans transition-all flex items-center gap-1 cursor-pointer ${
-                activeTab === 'all'
-                  ? 'bg-white text-stone-900 shadow-sm'
-                  : 'text-stone-600 hover:text-stone-900'
-              }`}
-            >
-              <Music className="w-3.5 h-3.5 text-stone-500" />
-              <span>Todas ({userSongs.length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('scores');
-                setSearchTerm('');
-              }}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold font-sans transition-all flex items-center gap-1 cursor-pointer ${
-                activeTab === 'scores'
-                  ? 'bg-emerald-700 text-white shadow-sm'
-                  : 'text-emerald-800 hover:text-emerald-950 hover:bg-emerald-100/60'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5 text-emerald-300" />
-              <span>Partituras & Tabs</span>
-            </button>
-          </div>
-
-          {/* Search Input */}
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder={
-                activeTab === 'scores'
-                  ? 'Buscar en Songsterr (ej. Metallica, Queen, Hotel California)...'
-                  : 'Filtrar por título, artista o tono (ej. C, G, Bm)...'
-              }
-              className="w-full bg-white border border-stone-300 focus:border-amber-600 focus:ring-2 focus:ring-amber-500/20 pl-9 pr-8 py-1.5 rounded-xl text-xs text-stone-900 font-sans transition-all outline-none shadow-sm"
-            />
-            {isSearchingScores ? (
-              <Loader2 className="w-3.5 h-3.5 text-emerald-700 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            ) : searchTerm ? (
-              <button
-                type="button"
-                onClick={() => setSearchTerm('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-700 cursor-pointer p-0.5"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            ) : null}
-          </div>
+        <div className="flex items-center justify-between text-[10px] font-sans text-stone-500 px-1">
+          <span className="flex items-center gap-1 truncate">
+            <Flame className="w-3 h-3 text-amber-600 fill-amber-500 flex-shrink-0" />
+            <span className="truncate">
+              {activeLibraryFilter === 'setlist'
+                ? `En setlist: ${filteredSongs.length} temas`
+                : activeLibraryFilter === 'favorites'
+                ? `Favoritas: ${filteredSongs.length} temas`
+                : `Mi cuaderno: ${filteredSongs.length} temas`}
+            </span>
+          </span>
+          {searchQuery && (
+            <span className="text-amber-800 font-medium ml-2 flex-shrink-0">
+              Filtrado: "{searchQuery}"
+            </span>
+          )}
         </div>
+      </div>
 
-        {/* ================= CONTENIDO DE LA LISTA ================= */}
-        <div className="space-y-2 max-h-[340px] xl:max-h-[390px] overflow-y-auto pr-1">
-          {/* ================= VISTA A: PARTITURAS & TABS SONGSTERR ================= */}
-          {activeTab === 'scores' ? (
-            <>
-              {scoreSearchError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 font-sans">
-                  {scoreSearchError}
-                </div>
-              )}
-
-              {/* Si hay resultados de búsqueda en Songsterr */}
-              {scoreResults.length > 0 && (
-                <div className="space-y-2">
-                  {scoreResults.map((song) => (
-                    <motion.div
-                      key={song.songId}
-                      whileHover={{ x: 3, scale: 1.004 }}
-                      onClick={() => handleSelectScoreItem(song)}
-                      className="p-3 bg-white/95 hover:bg-white rounded-xl border border-emerald-200 hover:border-emerald-400 shadow-xs hover:shadow-md transition-all cursor-pointer flex items-center justify-between group"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold border border-emerald-300 group-hover:bg-emerald-700 group-hover:text-white transition-colors shadow-xs flex-shrink-0">
-                          <FileText className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <h4 className="font-serif font-bold text-stone-900 text-xs sm:text-sm group-hover:text-emerald-900 transition-colors truncate">
-                            {song.title}
-                          </h4>
-                          <div className="flex items-center gap-1.5 text-[11px] font-sans text-stone-500 truncate">
-                            <span>{song.artist}</span>
-                            {song.tracks && (
-                              <>
-                                <span>•</span>
-                                <span className="text-emerald-800 font-medium">
-                                  {song.tracks.length} {song.tracks.length === 1 ? 'pista' : 'pistas'}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleSelectScoreItem(song)}
-                          className="px-2.5 py-1 bg-emerald-50 group-hover:bg-emerald-700 text-emerald-800 group-hover:text-white border border-emerald-200 group-hover:border-emerald-700 rounded-lg text-xs font-bold font-sans flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
-                        >
-                          <Play className="w-3 h-3 fill-current" />
-                          <span className="hidden sm:inline">Ver Partitura</span>
-                        </button>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-
-              {/* Si no se está buscando y no hay resultados todavía */}
-              {!searchTerm.trim() && scoreResults.length === 0 && (
-                <div className="space-y-3">
-                  {/* Partituras Guardadas si existen */}
-                  {savedScores && savedScores.length > 0 && (
-                    <div className="mb-3">
-                      <div className="flex items-center gap-1.5 text-xs font-serif font-bold text-stone-800 mb-2">
-                        <Bookmark className="w-3.5 h-3.5 text-amber-600 fill-amber-500" />
-                        <span>Partituras Guardadas en tu Biblioteca ({savedScores.length})</span>
-                      </div>
-                      <div className="space-y-1.5">
-                        {savedScores.map((saved) => (
-                          <div
-                            key={saved.id}
-                            onClick={() => handleSelectSavedScoreItem(saved)}
-                            className="p-2.5 bg-white/90 hover:bg-white rounded-xl border border-stone-200 hover:border-amber-400 shadow-2xs transition cursor-pointer flex items-center justify-between"
-                          >
-                            <div className="min-w-0">
-                              <h5 className="font-serif font-bold text-xs text-stone-900 truncate">
-                                {saved.title}
-                              </h5>
-                              <p className="text-[10px] text-stone-500 truncate">{saved.artist}</p>
-                            </div>
-                            <button
-                              type="button"
-                              className="p-1 rounded-md bg-stone-100 hover:bg-emerald-700 hover:text-white text-stone-600 transition"
-                            >
-                              <Play className="w-3 h-3 fill-current" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Sugerencias Rápidas */}
-                  <div className="p-3.5 bg-white/80 rounded-2xl border border-stone-200/90 shadow-xs">
-                    <span className="text-xs font-serif font-bold text-stone-800 block mb-1.5">
-                      ✦ Búsquedas Populares con Tablatura:
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {POPULAR_SEARCH_SUGGESTIONS.map((sug) => (
-                        <button
-                          key={sug}
-                          type="button"
-                          onClick={() => setSearchTerm(sug)}
-                          className="px-2.5 py-1 bg-stone-100 hover:bg-emerald-100 hover:text-emerald-900 border border-stone-200 rounded-lg text-[11px] font-sans text-stone-700 transition cursor-pointer flex items-center gap-1"
-                        >
-                          <span>{sug}</span>
-                          <ArrowRight className="w-2.5 h-2.5 opacity-60" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Banner Explicativo */}
-                  <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl text-xs text-emerald-950 font-sans leading-relaxed">
-                    <span className="font-bold block mb-0.5">🎼 Notación Interactiva de Songsterr:</span>
-                    Accede a tablaturas de guitarra, bajo, batería y teclados. Puedes aislar pistas, cambiar la velocidad para ensayar pasajes difíciles y ver la partitura en pantalla completa.
-                  </div>
-                </div>
-              )}
-
-              {/* Si buscó y no hubo resultados */}
-              {searchTerm.trim() && !isSearchingScores && scoreResults.length === 0 && (
-                <div className="py-10 text-center bg-white/60 rounded-2xl border border-dashed border-stone-300 p-6">
-                  <FileText className="w-8 h-8 mx-auto mb-2 text-stone-400" />
-                  <p className="font-serif font-bold text-stone-700 text-xs">
-                    No se encontraron partituras para "{searchTerm}"
-                  </p>
-                  <p className="text-[11px] text-stone-400 mt-0.5">
-                    Prueba buscando por el nombre de la banda o en inglés.
-                  </p>
-                </div>
-              )}
-            </>
-          ) : (
-            /* ================= VISTA B: CANCIONERO (FAVORITAS / TODAS) ================= */
-            <>
-              {filteredSongs.map((song) => {
-                const isFav = !!song.isFavorite;
-                const inActiveSet = isSongInActiveSetlist(song.id);
-                const isJustAdded = justAddedSongId === song.id;
+      {/* ================= CUADRÍCULA DE TARJETAS (2 COLUMNAS) ================= */}
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
+        <AnimatePresence mode="popLayout">
+          {filteredSongs.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pb-1">
+              {filteredSongs.map((song, i) => {
+                const rotationClass = i % 2 === 0 ? '-rotate-1' : 'rotate-1';
+                const isFav = Boolean(song.isFavorite);
+                const hasScore = song.popularityScore > 0;
 
                 return (
                   <motion.div
-                    key={song.id}
-                    whileHover={{ x: 3, scale: 1.004 }}
-                    onClick={() => onOpenSong(song)}
-                    className="p-3 bg-white/90 hover:bg-white rounded-xl border border-stone-200 shadow-sm hover:shadow-md transition-all cursor-pointer flex items-center justify-between group"
+                    key={song.id || `lib-song-${i}`}
+                    layout
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    transition={{ duration: 0.12 }}
+                    onClick={() => onOpenSong && onOpenSong(song)}
+                    className={`p-2 bg-white/95 hover:bg-white rounded-xl border border-stone-200/90 hover:border-amber-400/80 shadow-2xs hover:shadow-md transition-all cursor-pointer flex items-center gap-2.5 group text-left relative ${
+                      openSetlistMenuSongId === song.id ? 'z-30' : 'z-0'
+                    }`}
                   >
-                    {/* Left: Key Badge & Song Info */}
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center font-mono text-xs font-bold border border-amber-300 group-hover:bg-stone-900 group-hover:text-amber-300 group-hover:border-stone-900 transition-colors shadow-sm flex-shrink-0">
-                        {song.key || 'C'}
-                      </div>
+                    {/* Foto del Artista en formato Polaroid con Play visible en Hover */}
+                    <div
+                      className={`relative p-0.5 pb-1 bg-[#f4f2ec] rounded border border-stone-300/80 shadow-2xs flex-shrink-0 transition-transform duration-200 group-hover:rotate-0 group-hover:scale-105 ${rotationClass}`}
+                    >
+                      {song.artistImage ? (
+                        <img
+                          src={song.artistImage}
+                          alt={song.artist || 'Artista'}
+                          className="w-10 h-10 rounded-[2px] object-cover bg-stone-900 border border-stone-300/40"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-[2px] bg-[#352820] flex items-center justify-center text-amber-200">
+                          <Guitar className="w-4 h-4 text-amber-300/80" />
+                        </div>
+                      )}
 
-                      <div className="min-w-0">
-                        <h4 className="font-serif font-bold text-stone-900 text-xs sm:text-sm group-hover:text-amber-900 transition-colors truncate">
-                          {song.title}
-                        </h4>
-                        <p className="text-[11px] font-sans text-stone-500 truncate">
-                          {Array.isArray(song.artists) && song.artists.length > 0
-                            ? song.artists.map((a) => a.name).join(', ')
-                            : song.artist}
-                        </p>
+                      {/* Icono Play visible sobre la foto al hacer hover en la tarjeta */}
+                      <div className="absolute inset-0 bg-stone-900/60 rounded-[2px] opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center justify-center backdrop-blur-[0.5px]">
+                        <Play className="w-4 h-4 text-amber-300 fill-amber-300 ml-0.5 filter drop-shadow" />
                       </div>
                     </div>
 
-                    {/* Right: Actions */}
-                    <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                      {/* Quick Add to Active Setlist */}
-                      {activeSetlist && (
+                    {/* Información de la canción */}
+                    <div className="min-w-0 flex-1">
+                      <h4 className="font-serif font-bold text-stone-900 text-xs group-hover:text-amber-900 transition-colors truncate leading-tight">
+                        {song.title}
+                      </h4>
+                      <p className="text-[10.5px] font-sans text-stone-500 font-medium truncate mt-0.5 leading-tight">
+                        {(Array.isArray(song.artists) && song.artists.length > 0
+                          ? song.artists.map((a) => a.name).join(', ')
+                          : song.artist) || 'Artista Desconocido'}
+                      </p>
+
+                      {/* Metadatos: Tono & Popularidad */}
+                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                        {song.key && (
+                          <span className="font-mono text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-900 border border-amber-200/80">
+                            {song.key}
+                          </span>
+                        )}
+                        {hasScore ? (
+                          <span className="font-sans text-[9px] font-semibold text-amber-700 flex items-center gap-0.5 bg-amber-50/80 px-1 py-0.2 rounded border border-amber-200/50">
+                            <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-600" />
+                            <span>{song.popularityScore}</span>
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {/* Acciones Rápidas en la Tarjeta */}
+                    <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                      {/* Botón Favorito (Estrella) */}
+                      {onToggleFavorite && (
                         <button
                           type="button"
-                          onClick={(e) => handleAddClick(e, song)}
-                          className={`px-2 py-1 rounded-lg text-xs font-bold font-sans flex items-center gap-1 transition-all cursor-pointer shadow-sm ${
-                            isJustAdded
-                              ? 'bg-emerald-600 text-white'
-                              : inActiveSet
-                              ? 'bg-stone-100 text-stone-500 hover:bg-stone-200'
-                              : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleFavorite(song);
+                          }}
+                          className={`p-1 rounded-lg transition-all cursor-pointer ${
+                            isFav
+                              ? 'text-amber-500 hover:text-amber-600 bg-amber-50'
+                              : 'text-stone-300 hover:text-amber-500 hover:bg-stone-100'
                           }`}
-                          title={
-                            inActiveSet
-                              ? `Ya está en "${activeSetlist.name}". Clic para agregar de nuevo.`
-                              : `Sumar a "${activeSetlist.name}"`
-                          }
+                          title={isFav ? 'Quitar de favoritas' : 'Marcar como favorita'}
                         >
-                          {isJustAdded ? (
-                            <>
-                              <Check className="w-3 h-3" />
-                              <span className="text-[10px]">¡Listo!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="w-3 h-3" />
-                              <span className="hidden md:inline text-[10px]">Al Set</span>
-                            </>
-                          )}
+                          <Star className={`w-3.5 h-3.5 ${isFav ? 'fill-current' : ''}`} />
                         </button>
                       )}
 
-                      {/* Favorite Star Toggle */}
-                      <button
-                        type="button"
-                        onClick={() => onToggleFavorite(song)}
-                        className="p-1.5 rounded-lg hover:bg-amber-50 transition-all cursor-pointer"
-                        title={isFav ? 'Quitar de favoritas' : 'Marcar como favorita'}
-                      >
-                        <Star
-                          className={`w-4 h-4 transition-transform active:scale-125 ${
-                            isFav
-                              ? 'text-amber-500 fill-amber-400'
-                              : 'text-stone-300 hover:text-amber-400'
+                      {/* Botón Agregar a Setlist (con Popover desplegable) */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenSetlistMenuSongId(openSetlistMenuSongId === song.id ? null : song.id);
+                          }}
+                          className={`p-1 rounded-lg transition-all cursor-pointer ${
+                            openSetlistMenuSongId === song.id
+                              ? 'bg-amber-100 text-amber-900'
+                              : 'text-stone-400 hover:text-amber-800 hover:bg-stone-100'
                           }`}
-                        />
-                      </button>
+                          title="Sumar a un repertorio"
+                        >
+                          <FolderPlus className="w-3.5 h-3.5" />
+                        </button>
 
-                      {/* Play / Open Button */}
-                      <button
-                        type="button"
-                        onClick={() => onOpenSong(song)}
-                        className="p-1.5 rounded-lg bg-stone-100 group-hover:bg-stone-900 text-stone-400 group-hover:text-amber-300 transition-colors cursor-pointer"
-                        title="Abrir acordes"
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                      </button>
+                        {/* Popover flotante de selección de Setlist */}
+                        {openSetlistMenuSongId === song.id && (
+                          <div
+                            className={`absolute right-0 ${
+                              i >= filteredSongs.length - 2 ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+                            } w-48 bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-stone-200/90 p-2 z-50 space-y-1 text-left`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="flex items-center justify-between pb-1 border-b border-stone-100">
+                              <span className="font-sans font-bold text-[10px] text-stone-500 uppercase tracking-wider">
+                                Sumar a Setlist
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenSetlistMenuSongId(null);
+                                }}
+                                className="text-stone-400 hover:text-stone-600 p-0.5 rounded cursor-pointer"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+
+                            {setlists.length > 0 ? (
+                              <div className="max-h-36 overflow-y-auto space-y-0.5 custom-scrollbar py-0.5">
+                                {setlists.map((sl) => {
+                                  const inThisSetlist = (sl.songs || []).some(
+                                    (s) => String(s.id) === String(song.id) || (s.title === song.title && s.artist === song.artist)
+                                  );
+                                  return (
+                                    <button
+                                      key={sl.name}
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (inThisSetlist) {
+                                          onRemoveSongFromSetlist && onRemoveSongFromSetlist(sl.name, song.id);
+                                        } else {
+                                          onAddSongToSetlist && onAddSongToSetlist(sl.name, song);
+                                        }
+                                      }}
+                                      className={`w-full px-2 py-1.5 rounded-lg text-left text-[11px] font-sans flex items-center justify-between transition-colors cursor-pointer ${
+                                        inThisSetlist
+                                          ? 'bg-amber-100/90 text-amber-950 font-bold'
+                                          : 'hover:bg-stone-50 text-stone-700'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        <Folder className="w-3.5 h-3.5 text-amber-700 flex-shrink-0" />
+                                        <span className="truncate">{sl.name}</span>
+                                      </div>
+                                      {inThisSetlist ? (
+                                        <Check className="w-3.5 h-3.5 text-amber-800 flex-shrink-0" />
+                                      ) : (
+                                        <Plus className="w-3 h-3 text-stone-400 flex-shrink-0" />
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="py-2 px-1 text-center text-stone-500 text-[11px] font-sans">
+                                <p className="font-semibold text-stone-700">Sin setlists creados</p>
+                                <p className="text-[10px] text-stone-400 mt-0.5">Crea uno en la hoja izquierda para sumar temas.</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Botón Quitar de Setlist o Guardadas con Confirmación Inline */}
+                      {deletingSongId === song.id ? (
+                        <div
+                          className="flex items-center gap-1 bg-red-50 border border-red-200 rounded-lg px-1.5 py-0.5 shadow-2xs z-10"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="text-[10px] font-sans font-bold text-red-700">¿Quitar?</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (activeLibraryFilter === 'setlist' && activeSetlist && onRemoveSongFromSetlist) {
+                                onRemoveSongFromSetlist(activeSetlist.name, song.id);
+                              } else if (onToggleSaveSong) {
+                                onToggleSaveSong(song);
+                              }
+                              setDeletingSongId(null);
+                            }}
+                            className="px-1.5 py-0.2 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold font-sans cursor-pointer transition-colors"
+                          >
+                            Sí
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeletingSongId(null);
+                            }}
+                            className="px-1.5 py-0.2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded text-[10px] font-bold font-sans cursor-pointer transition-colors"
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          {/* Botón Quitar de Setlist */}
+                          {activeLibraryFilter === 'setlist' && activeSetlist && onRemoveSongFromSetlist && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeletingSongId(song.id);
+                              }}
+                              className="p-1 text-stone-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                              title="Quitar de este setlist"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
+                          {/* Botón Quitar de Guardadas (en vista 'all') */}
+                          {activeLibraryFilter === 'all' && onToggleSaveSong && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeletingSongId(song.id);
+                              }}
+                              className="p-1 text-stone-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
+                              title="Quitar de mis canciones guardadas"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </>
+                      )}
                     </div>
                   </motion.div>
                 );
               })}
-
-              {filteredSongs.length === 0 && (
-                <div className="py-10 text-center bg-white/60 rounded-2xl border border-dashed border-stone-300 p-6">
-                  {activeTab === 'favorites' && !searchTerm ? (
-                    <>
-                      <Star className="w-10 h-10 mx-auto mb-2 text-amber-300 fill-amber-100" />
-                      <h4 className="font-serif font-bold text-stone-800 text-sm">No tienes canciones favoritas aún</h4>
-                      <p className="text-xs font-sans text-stone-500 mt-1 max-w-sm mx-auto">
-                        Ve a la pestaña <strong>"Todas"</strong> o toca <strong>"Partituras & Tabs"</strong> para explorar canciones y agregarlas a tus favoritos.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('all')}
-                        className="mt-3 px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-bold font-sans cursor-pointer transition-colors"
-                      >
-                        Ver todas las canciones
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <Music className="w-8 h-8 mx-auto mb-2 text-stone-400" />
-                      <p className="font-serif font-bold text-stone-700 text-xs">No se encontraron canciones</p>
-                      <p className="text-[11px] text-stone-400 mt-0.5">Prueba con otra búsqueda o busca en Partituras & Tabs.</p>
-                    </>
+            </div>
+          ) : (
+            <div className="py-8 text-center text-stone-500 space-y-2">
+              <Music className="w-7 h-7 mx-auto text-stone-400/80" />
+              {searchQuery ? (
+                <>
+                  <p className="text-xs font-sans">No se encontraron temas para "{searchQuery}".</p>
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="text-xs font-sans font-bold text-amber-800 underline hover:text-amber-950 cursor-pointer"
+                  >
+                    Ver todas las canciones
+                  </button>
+                </>
+              ) : activeLibraryFilter === 'setlist' ? (
+                <>
+                  <p className="text-xs font-sans font-medium text-stone-700">Este setlist está vacío.</p>
+                  <p className="text-[11px] font-sans text-stone-400">
+                    Suma temas desde "Mis Guardadas" o usa el buscador global.
+                  </p>
+                  {onBackToAll && (
+                    <button
+                      type="button"
+                      onClick={onBackToAll}
+                      className="mt-1 px-3 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg text-xs font-bold font-sans cursor-pointer transition-colors"
+                    >
+                      Ir a Mis Guardadas
+                    </button>
                   )}
-                </div>
+                </>
+              ) : activeLibraryFilter === 'favorites' ? (
+                <>
+                  <p className="text-xs font-sans font-medium text-stone-700">No tienes canciones favoritas todavía.</p>
+                  <p className="text-[11px] font-sans text-stone-400">
+                    Toca la estrella ⭐ en cualquier tema para sumarlo aquí.
+                  </p>
+                  {onBackToAll && (
+                    <button
+                      type="button"
+                      onClick={onBackToAll}
+                      className="mt-1 px-3 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg text-xs font-bold font-sans cursor-pointer transition-colors"
+                    >
+                      Explorar Mis Guardadas
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-xs font-sans font-medium text-stone-700">Tu cancionero está vacío.</p>
+                  <p className="text-[11px] font-sans text-stone-400">
+                    Busca canciones en la web o crea una nueva con acordes y video.
+                  </p>
+                  {onOpenSearchModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenSearchModal}
+                      className="mt-1 px-3 py-1 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-bold font-sans cursor-pointer transition-colors"
+                    >
+                      Buscar en Web
+                    </button>
+                  )}
+                </>
               )}
-            </>
+            </div>
           )}
+        </AnimatePresence>
+      </div>
+
+      {/* Backdrop transparente para cerrar menú de Setlist al hacer clic afuera */}
+      {openSetlistMenuSongId && (
+        <div
+          className="fixed inset-0 z-20 pointer-events-auto"
+          onClick={() => setOpenSetlistMenuSongId(null)}
+        />
+      )}
+
+      {/* ================= BANNER INFERIOR SI NO ES PRO ================= */}
+      {!isPro && (
+        <div className="flex-shrink-0 pt-1">
+          <AdBanner slot="library-footer" />
         </div>
-
-        {/* Non-Pro Ad Banner */}
-        {!isPro && <AdBanner slotId="dashboard-bottom" />}
-      </div>
-
-      {/* ================= FOOTER INFO ================= */}
-      <div className="pt-3 border-t border-stone-200/70 flex items-center justify-between text-[11px] font-sans text-stone-500 mt-auto">
-        <span className="font-medium">
-          {activeTab === 'scores'
-            ? scoreResults.length > 0
-              ? `${scoreResults.length} partituras encontradas`
-              : `${savedScores.length} partituras guardadas`
-            : `${filteredSongs.length} ${filteredSongs.length === 1 ? 'canción mostrada' : 'canciones mostradas'}`}
-        </span>
-        <span className="font-serif italic flex items-center gap-1 text-amber-900 font-semibold">
-          <Database className="w-3 h-3" /> Sincronizado en Vivo
-        </span>
-      </div>
+      )}
     </div>
   );
 }

@@ -39,6 +39,7 @@ model UserSongPreference {
   customContent String?              // Arreglos o letra personalizada del usuario
   isCustom      Boolean  @default(false)
   isFavorite    Boolean  @default(false)
+  isSaved       Boolean  @default(true)
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -104,6 +105,7 @@ model Song {
   releaseYear     Int?
   versionType     String?       @default("studio")
   versionDetails  String?
+  genre           String?       // Género musical: Rock, Punk, Tango, etc.
 
   albumId         String?
   albumRel        Album?        @relation(fields: [albumId], references: [id], onDelete: SetNull)
@@ -120,6 +122,7 @@ model Song {
   @@index([title, artist])
   @@index([youtubeId])
   @@index([albumId])
+  @@index([genre])
 }
 
 // ------------------------------------
@@ -173,6 +176,7 @@ model CustomChord {
   instrument String
   chordName  String
   data       String
+  verified   Boolean  @default(false)
   createdAt  DateTime @default(now())
 }
 
@@ -211,4 +215,21 @@ model ScoreSheet {
 
   @@index([artist, title])
   @@index([songId])
+}
+
+// ------------------------------------
+// CACHÉ DE SCRAPING DE CHORDIFY
+// ------------------------------------
+model ChordifyCache {
+  youtubeId     String   @id
+  hasLyrics     Boolean  @default(false)
+  lyricsType    String?
+  title         String?
+  artist        String?
+  bpm           Int?
+  leadSheetText String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([hasLyrics])
 }

@@ -133,7 +133,20 @@ export default function ActiveChordCard({
     onVariantChange?.(cleanName, newIdx);
   };
 
-  const handleSaveCustomChord = (newChordData) => {
+  const handleSaveCustomChord = (newChordData, serverResponse) => {
+    if (serverResponse && Array.isArray(serverResponse.positions)) {
+      const newResult = {
+        chordName: cleanName,
+        positions: serverResponse.positions,
+      };
+      chordCache.set(cleanName, newResult);
+      setChordData(newResult);
+      const targetIdx = serverResponse.variantIndex !== undefined ? serverResponse.variantIndex : 0;
+      setVariantIndex(targetIdx);
+      onVariantChange?.(cleanName, targetIdx);
+      return;
+    }
+
     const updatedPositions = [newChordData, ...(chordData?.positions || [])];
     const newResult = {
       chordName: cleanName,
@@ -142,6 +155,7 @@ export default function ActiveChordCard({
     chordCache.set(cleanName, newResult);
     setChordData(newResult);
     setVariantIndex(0); // Select new variation immediately
+    onVariantChange?.(cleanName, 0);
   };
 
   return (

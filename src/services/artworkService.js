@@ -98,6 +98,45 @@ export async function reportBrokenImage({
   }
 }
 
+/**
+ * Resolves a URL to a direct image URL if it points to a web page (e.g. Discogs release page).
+ */
+export async function resolveArtworkUrl(url = '') {
+  const trimmed = (url || '').trim();
+  if (!trimmed) return null;
+
+  // Direct image URLs don't need server resolution
+  if (
+    trimmed.match(/\.(jpeg|jpg|png|webp|gif)(\?.*)?$/i) ||
+    trimmed.startsWith('data:image/') ||
+    trimmed.includes('i.discogs.com') ||
+    trimmed.includes('mzstatic.com') ||
+    trimmed.includes('deezer.com/images') ||
+    trimmed.includes('wikimedia.org')
+  ) {
+    return trimmed;
+  }
+
+  // If it's a Discogs page URL or other web page, attempt resolution via backend
+  if (trimmed.includes('discogs.com')) {
+    try {
+      const res = await fetch(`${BASE_URL}/resolve-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: trimmed }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.url) return data.url;
+      }
+    } catch (e) {
+      console.warn('[ArtworkService] Error resolving URL:', e);
+    }
+  }
+
+  return trimmed;
+}
+
 function getLocalCache() {
   try {
     const raw = localStorage.getItem(ARTWORK_CACHE_KEY);
@@ -130,9 +169,16 @@ export function cleanSearchQuery(text = '') {
  * Search album artwork options from the backend aggregator (Deezer, iTunes, Cover Art Archive, Wikipedia)
  */
 export async function searchAlbumArtworkOptions(artist = '', title = '', source = 'all') {
-  const cleanArt = cleanSearchQuery(artist);
-  const cleanTit = cleanSearchQuery(title);
-  if (!cleanArt && !cleanTit) return [];
+  let cleanArt = cleanSearchQuery(artist);
+  let cleanTit = cleanSearchQuery(title);
+
+  // If artist is empty but title was passed, treat title as main query
+  if (!cleanArt && cleanTit) {
+    cleanArt = cleanTit;
+    cleanTit = '';
+  }
+
+  if (!cleanArt) return [];
 
   // 1. Try multi-source backend aggregator
   try {
@@ -159,21 +205,39 @@ export async function searchAlbumArtworkOptions(artist = '', title = '', source 
   if (source === 'all' || source === 'itunes') {
     try {
       const query = `${cleanArt} ${cleanTit}`.trim();
-      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=6`;
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=album&limit=8`;
       const res = await fetch(url);
-      if (!res.ok) return [];
-      const data = await res.json();
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.results?.length > 0) {
+          return data.results
+            .filter((item) => item.artworkUrl100)
+            .map((item) => ({
+              albumCover: item.artworkUrl100.replace(/\/\d+x\d+bb/, '/1000x1000bb').replace('100x100bb', '1000x1000bb'),
+              url: item.artworkUrl100.replace(/\/\d+x\d+bb/, '/1000x1000bb').replace('100x100bb', '1000x1000bb'),
+              label: `${item.collectionName || item.artistName} (${item.releaseDate ? new Date(item.releaseDate).getFullYear() : 'iTunes'})`,
+              source: 'iTunes',
+              resolution: '1000×1000',
+            }));
+        }
+      }
 
-      if (data?.results?.length > 0) {
-        return data.results
-          .filter((item) => item.artworkUrl100)
-          .map((item) => ({
-            albumCover: item.artworkUrl100.replace('100x100bb', '1000x1000bb'),
-            url: item.artworkUrl100.replace('100x100bb', '1000x1000bb'),
-            label: `${item.collectionName || item.trackName} (${item.releaseDate ? new Date(item.releaseDate).getFullYear() : 'iTunes'})`,
-            source: 'iTunes',
-            resolution: '1000×1000',
-          }));
+      // If entity=album returned no results, try entity=song fallback
+      const songUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=6`;
+      const songRes = await fetch(songUrl);
+      if (songRes.ok) {
+        const songData = await songRes.json();
+        if (songData?.results?.length > 0) {
+          return songData.results
+            .filter((item) => item.artworkUrl100)
+            .map((item) => ({
+              albumCover: item.artworkUrl100.replace(/\/\d+x\d+bb/, '/1000x1000bb').replace('100x100bb', '1000x1000bb'),
+              url: item.artworkUrl100.replace(/\/\d+x\d+bb/, '/1000x1000bb').replace('100x100bb', '1000x1000bb'),
+              label: `${item.collectionName || item.trackName} (${item.releaseDate ? new Date(item.releaseDate).getFullYear() : 'iTunes'})`,
+              source: 'iTunes',
+              resolution: '1000×1000',
+            }));
+        }
       }
     } catch (err) {
       console.warn('[ArtworkService] iTunes fallback error:', err);

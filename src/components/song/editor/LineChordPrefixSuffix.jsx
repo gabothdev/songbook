@@ -10,10 +10,14 @@ export function LinePrefixChords({
   secIdx,
   lineIdx,
   prefixChords = [],
+  prefixChordRanks = [],
+  activeChordRank = -1,
+  isChordLineActive = false,
   activeStampChord,
   onAddPrefixChord,
   onRemovePrefixChord,
   onOpenPicker,
+  onNavigateChord = null,
   isSectionSynced = false,
 }) {
   const handleSlotClick = () => {
@@ -51,65 +55,73 @@ export function LinePrefixChords({
   return (
     <div className="inline-flex items-end flex-shrink-0 mr-1.5 select-none">
       {/* Existing prefix chords rendered as vertical column (chord top, indent bottom) */}
-      {prefixChords.map((item) => (
-        <div
-          key={item.id}
-          className="inline-flex flex-col items-start justify-end flex-shrink-0 mr-1.5 group/chord"
-        >
-          {/* Top Row: Clean Chord Badge */}
-          <div className="h-5 flex items-center mb-0.5">
-            <div
-              draggable
-              onDragStart={(e) => {
-                e.stopPropagation();
-                e.dataTransfer.setData(
-                  'application/json',
-                  JSON.stringify({
-                    chord: item.chord,
-                    sourcePrefixId: item.id,
-                    sourceSecIdx: secIdx,
-                    sourceLineIdx: lineIdx,
-                  })
-                );
-                e.dataTransfer.setData('text/plain', item.chord);
-              }}
-              className={`inline-flex items-center gap-1 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs cursor-grab active:cursor-grabbing transition-transform hover:scale-105 ${
-                isSectionSynced
-                  ? 'text-amber-950 bg-amber-200/90 hover:bg-amber-300 border border-amber-400/80'
-                  : 'text-stone-700 bg-stone-100 hover:bg-amber-100 border border-dashed border-stone-300 hover:border-amber-400'
-              }`}
-              title={
-                isSectionSynced
-                  ? `Acorde previo [${item.chord}] sincronizado con timestamp. Arrastra para mover o clic en la cruz para quitar.`
-                  : `Acorde previo [${item.chord}] sin timestamp (modo libre). Arrastra para mover o clic en la cruz para quitar.`
-              }
-            >
-              <span>{item.chord}</span>
-              {isSectionSynced && (
-                <span
-                  className="w-1.5 h-1.5 rounded-full bg-emerald-600 shadow-2xs flex-shrink-0"
-                  title="Sincronizado"
-                />
-              )}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemovePrefixChord(secIdx, lineIdx, item.id);
+      {prefixChords.map((item, pIdx) => {
+        const chordRank = prefixChordRanks[pIdx] ?? -1;
+        const isChordActive = isChordLineActive && chordRank >= 0 && chordRank === activeChordRank;
+
+        return (
+          <div
+            key={item.id}
+            className="inline-flex flex-col items-start justify-end flex-shrink-0 mr-1.5 group/chord"
+          >
+            {/* Top Row: Clean Chord Badge */}
+            <div className="h-5 flex items-center mb-0.5">
+              <div
+                draggable
+                onClick={() => {
+                  if (!activeStampChord && onNavigateChord) {
+                    onNavigateChord(item.chord, chordRank, pIdx);
+                  }
                 }}
-                className="opacity-0 group-hover/chord:opacity-100 hover:text-rose-700 cursor-pointer ml-0.5 p-0.2"
-                title="Quitar acorde previo"
+                onDragStart={(e) => {
+                  e.stopPropagation();
+                  e.dataTransfer.setData(
+                    'application/json',
+                    JSON.stringify({
+                      chord: item.chord,
+                      sourcePrefixId: item.id,
+                      sourceSecIdx: secIdx,
+                      sourceLineIdx: lineIdx,
+                    })
+                  );
+                  e.dataTransfer.setData('text/plain', item.chord);
+                }}
+                className={`inline-flex items-center gap-1 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs cursor-pointer active:cursor-grabbing transition-all hover:scale-105 ${
+                  isChordActive
+                    ? 'bg-amber-500 text-amber-950 ring-2 ring-amber-600 shadow-md scale-110 z-10 font-black'
+                    : isSectionSynced
+                    ? 'text-amber-950 bg-amber-200/90 hover:bg-amber-300 border border-amber-400/80'
+                    : 'text-stone-700 bg-stone-100 hover:bg-amber-100 border border-dashed border-stone-300 hover:border-amber-400'
+                }`}
+                title={`Clic para ir al pulso de [${item.chord}] en BeatGrid y video • Arrastra para mover`}
               >
-                <X className="w-2.5 h-2.5" />
-              </button>
+                <span>{item.chord}</span>
+                {isSectionSynced && (
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-emerald-600 shadow-2xs flex-shrink-0"
+                    title="Sincronizado"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemovePrefixChord(secIdx, lineIdx, item.id);
+                  }}
+                  className="opacity-0 group-hover/chord:opacity-100 hover:text-rose-700 cursor-pointer ml-0.5 p-0.2"
+                  title="Quitar acorde previo"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </div>
+            </div>
+            {/* Bottom Row: Invisible spacer keeping exact baseline alignment */}
+            <div className="font-sans text-sm whitespace-pre leading-snug invisible select-none">
+              {item.chord.length > 3 ? '   ' : '  '}
             </div>
           </div>
-          {/* Bottom Row: Invisible spacer keeping exact baseline alignment */}
-          <div className="font-sans text-sm whitespace-pre leading-snug invisible select-none">
-            {item.chord.length > 3 ? '   ' : '  '}
-          </div>
-        </div>
-      ))}
+        );
+      })}
 
       {/* Discrete Hover-Only Drop / Add Slot for Prefix Chords */}
       <div
@@ -151,10 +163,14 @@ export function LineSuffixChords({
   secIdx,
   lineIdx,
   suffixChords = [],
+  suffixChordRanks = [],
+  activeChordRank = -1,
+  isChordLineActive = false,
   activeStampChord,
   onAddSuffixChord,
   onRemoveSuffixChord,
   onOpenPicker,
+  onNavigateChord = null,
   isSectionSynced = false,
 }) {
   const handleSlotClick = () => {
@@ -221,65 +237,73 @@ export function LineSuffixChords({
       </div>
 
       {/* Existing suffix chords */}
-      {suffixChords.map((item) => (
-        <div
-          key={item.id}
-          className="inline-flex flex-col items-start justify-end flex-shrink-0 mr-1.5 group/chord"
-        >
-          {/* Top Row: Clean Chord Badge */}
-          <div className="h-5 flex items-center mb-0.5">
-            <div
-              draggable
-              onDragStart={(e) => {
-                e.stopPropagation();
-                e.dataTransfer.setData(
-                  'application/json',
-                  JSON.stringify({
-                    chord: item.chord,
-                    sourceSuffixId: item.id,
-                    sourceSecIdx: secIdx,
-                    sourceLineIdx: lineIdx,
-                  })
-                );
-                e.dataTransfer.setData('text/plain', item.chord);
-              }}
-              className={`inline-flex items-center gap-1 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs cursor-grab active:cursor-grabbing transition-transform hover:scale-105 ${
-                isSectionSynced
-                  ? 'text-amber-950 bg-amber-200/90 hover:bg-amber-300 border border-amber-400/80'
-                  : 'text-stone-700 bg-stone-100 hover:bg-amber-100 border border-dashed border-stone-300 hover:border-amber-400'
-              }`}
-              title={
-                isSectionSynced
-                  ? `Acorde final [${item.chord}] sincronizado con timestamp. Arrastra para mover o clic en la cruz para quitar.`
-                  : `Acorde final [${item.chord}] sin timestamp (modo libre). Arrastra para mover o clic en la cruz para quitar.`
-              }
-            >
-              <span>{item.chord}</span>
-              {isSectionSynced && (
-                <span
-                  className="w-1.5 h-1.5 rounded-full bg-emerald-600 shadow-2xs flex-shrink-0"
-                  title="Sincronizado"
-                />
-              )}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemoveSuffixChord(secIdx, lineIdx, item.id);
+      {suffixChords.map((item, sIdx) => {
+        const chordRank = suffixChordRanks[sIdx] ?? -1;
+        const isChordActive = isChordLineActive && chordRank >= 0 && chordRank === activeChordRank;
+
+        return (
+          <div
+            key={item.id}
+            className="inline-flex flex-col items-start justify-end flex-shrink-0 mr-1.5 group/chord"
+          >
+            {/* Top Row: Clean Chord Badge */}
+            <div className="h-5 flex items-center mb-0.5">
+              <div
+                draggable
+                onClick={() => {
+                  if (!activeStampChord && onNavigateChord) {
+                    onNavigateChord(item.chord, chordRank, sIdx);
+                  }
                 }}
-                className="opacity-0 group-hover/chord:opacity-100 hover:text-rose-700 cursor-pointer ml-0.5 p-0.2"
-                title="Quitar acorde final"
+                onDragStart={(e) => {
+                  e.stopPropagation();
+                  e.dataTransfer.setData(
+                    'application/json',
+                    JSON.stringify({
+                      chord: item.chord,
+                      sourceSuffixId: item.id,
+                      sourceSecIdx: secIdx,
+                      sourceLineIdx: lineIdx,
+                    })
+                  );
+                  e.dataTransfer.setData('text/plain', item.chord);
+                }}
+                className={`inline-flex items-center gap-1 font-mono font-bold text-xs px-1.5 py-0.5 rounded shadow-xs cursor-pointer active:cursor-grabbing transition-all hover:scale-105 ${
+                  isChordActive
+                    ? 'bg-amber-500 text-amber-950 ring-2 ring-amber-600 shadow-md scale-110 z-10 font-black'
+                    : isSectionSynced
+                    ? 'text-amber-950 bg-amber-200/90 hover:bg-amber-300 border border-amber-400/80'
+                    : 'text-stone-700 bg-stone-100 hover:bg-amber-100 border border-dashed border-stone-300 hover:border-amber-400'
+                }`}
+                title={`Clic para ir al pulso de [${item.chord}] en BeatGrid y video • Arrastra para mover`}
               >
-                <X className="w-2.5 h-2.5" />
-              </button>
+                <span>{item.chord}</span>
+                {isSectionSynced && (
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-emerald-600 shadow-2xs flex-shrink-0"
+                    title="Sincronizado"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemoveSuffixChord(secIdx, lineIdx, item.id);
+                  }}
+                  className="opacity-0 group-hover/chord:opacity-100 hover:text-rose-700 cursor-pointer ml-0.5 p-0.2"
+                  title="Quitar acorde final"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </div>
+            </div>
+            {/* Bottom Row: Invisible spacer */}
+            <div className="font-sans text-sm whitespace-pre leading-snug invisible select-none">
+              {item.chord.length > 3 ? '   ' : '  '}
             </div>
           </div>
-          {/* Bottom Row: Invisible spacer */}
-          <div className="font-sans text-sm whitespace-pre leading-snug invisible select-none">
-            {item.chord.length > 3 ? '   ' : '  '}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

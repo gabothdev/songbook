@@ -24,9 +24,11 @@ import useYouTubeSync from '../../hooks/useYouTubeSync';
 import { CHORD_DATABASE, SAMPLE_SONGS_DATA } from '../../data/sampleSongs';
 import { transposeChord, normalizeChordName } from '../../utils/music';
 import { playStrummedChord, getNotesFromFrets } from '../../utils/audioPlayer';
-import { parseSongTextToGrid, alignCompasesWithSongSections, formatCompasesToText, getSongBpm, updateTextBpm, doubleGridBpm, halveGridBpm } from '../../utils/gridParser';
-import { lookupChord, saveCustomSongVersion, restoreOriginalSong, saveSong, updateSongPreferences } from '../../services/persistenceApi';
-import SongLyricsEditor from './SongLyricsEditor';
+import { lookupChord, updateSongPreferences } from '../../services/persistenceApi';
+import useAutoScroll from '../../hooks/useAutoScroll';
+import useChordDefinitions from '../../hooks/useChordDefinitions';
+import { useSongArrangement } from '../../hooks/useSongArrangement';
+import { useSongRhythmGrid, useCurrentPlayingChord } from '../../hooks/useSongRhythmGrid';
 import SongLyricsVisualEditor from './SongLyricsVisualEditor';
 import YouTubeVideoPickerModal from './YouTubeVideoPickerModal';
 import SongMemorabiliaDesk from './SongMemorabiliaDesk';
@@ -38,11 +40,15 @@ import SongMemorabiliaDesk from './SongMemorabiliaDesk';
 export default function SongSheetView({
   song,
   onBack,
+  onNavigateAuth = null,
   setlistContext = null,
   isFavorite = false,
   onToggleFavorite = null,
+  isSaved = false,
+  onToggleSaveSong = null,
   setlists = [],
   onAddSongToSetlist = null,
+  onUpdateSong = null,
 }) {
   const { currentUser, openUpgradeModal, isPro, isAdmin } = useAuth();
   const isPremium = isPro || currentUser?.tier === 'PREMIUM';
@@ -65,23 +71,75 @@ export default function SongSheetView({
     currentUser,
   });
 
-  // Song Content & Custom Arrangement State
-  const [currentContent, setCurrentContent] = useState(song.content || '');
-  const [isCustom, setIsCustom] = useState(Boolean(song.isCustom));
-  const [isInstrumental, setIsInstrumental] = useState(Boolean(song.isInstrumental));
-  const [originalContent, setOriginalContent] = useState(song.originalContent || null);
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [draftContent, setDraftContent] = useState(song.content || '');
-  const [isSaving, setIsSaving] = useState(false);
-  const [currentYouTubeId, setCurrentYouTubeId] = useState(song.youtubeId || '');
-  const [isSyncMode, setIsSyncMode] = useState(true);
+  // Encapsulated Song Arrangement & Custom Version Hook
+  const {
+    currentContent,
+    setCurrentContent,
+    isCustom,
+    setIsCustom,
+    isInstrumental,
+    setIsInstrumental,
+    originalContent,
+    setOriginalContent,
+    isEditMode,
+    setIsEditMode,
+    draftContent,
+    setDraftContent,
+    isSaving,
+    currentYouTubeId,
+    setCurrentYouTubeId,
+    handleToggleEditMode,
+    handleSelectYouTubeVideo,
+    handleSaveCustomVersion,
+    handleMarkAsInstrumental,
+    handleRestoreOriginal,
+  } = useSongArrangement({
+    song,
+    currentUser,
+    onNotify: setFeedbackToast,
+  });
+
+  const [activeStampChord, setActiveStampChord] = useState(null);
   const [isYouTubePickerOpen, setIsYouTubePickerOpen] = useState(false);
 
-  const [isAutoScrolling, setIsAutoScrolling] = useState(false);
-  const [scrollSpeed] = useState(1);
+  const {
+    isAutoScrolling,
+    setIsAutoScrolling,
+    scrollSpeed,
+    scrollContainerRef: lyricsScrollRef,
+    toggleAutoScroll,
+    resetScroll,
+  } = useAutoScroll({ initialSpeed: 1 });
+
   const [activeChord, setActiveChord] = useState(song.uniqueChords?.[0] || 'C');
   const [isVideoPaperOpen, setIsVideoPaperOpen] = useState(true);
   const [isSetlistDropdownOpen, setIsSetlistDropdownOpen] = useState(false);
+  const [showAuthRequiredModal, setShowAuthRequiredModal] = useState(false);
+
+  const handleGuardedToggleFavorite = (s) => {
+    if (!currentUser) {
+      setShowAuthRequiredModal(true);
+      return;
+    }
+    if (onToggleFavorite) onToggleFavorite(s);
+  };
+
+  const handleGuardedAddToSetlist = (setlistName, s) => {
+    if (!currentUser) {
+      setShowAuthRequiredModal(true);
+      return;
+    }
+    if (onAddSongToSetlist) onAddSongToSetlist(setlistName, s);
+  };
+
+  const handleGuardedToggleSave = (s) => {
+    if (!currentUser) {
+      setShowAuthRequiredModal(true);
+      return;
+    }
+    if (onToggleSaveSong) onToggleSaveSong(s);
+  };
+
   // Mobile-only tab switcher: 'lyrics' | 'chords'
   const [mobilePage, setMobilePage] = useState('lyrics');
 
@@ -109,10 +167,6 @@ export default function SongSheetView({
   const [beatGridMode, setBeatGridMode] = useState('ribbon');
   const [isMetronomeActive, setIsMetronomeActive] = useState(false);
 
-  // Dynamic chord definitions loaded from SQLite database
-  const [chordDefinitions, setChordDefinitions] = useState({});
-
-  const lyricsScrollRef = useRef(null);
   const setlistDropdownRef = useRef(null);
 
   // Fix #11 — Close the setlist dropdown when clicking outside of it
@@ -136,7 +190,7 @@ export default function SongSheetView({
 
   // Handle updating and persisting artist image and album cover
   const handleUpdateSongImages = useCallback(
-    async ({ artistImage, albumCover, album, releaseYear, versionType, versionDetails }) => {
+    async ({ artistImage, albumCover, album, releaseYear, versionType, versionDetails, artists }) => {
       if (!song) return;
       if (artistImage !== undefined) song.artistImage = artistImage;
       if (albumCover !== undefined) song.albumCover = albumCover;
@@ -144,6 +198,19 @@ export default function SongSheetView({
       if (releaseYear !== undefined) song.releaseYear = releaseYear;
       if (versionType !== undefined) song.versionType = versionType;
       if (versionDetails !== undefined) song.versionDetails = versionDetails;
+      if (artists !== undefined) song.artists = artists;
+
+      if (onUpdateSong) {
+        onUpdateSong({
+          ...(artistImage !== undefined ? { artistImage } : {}),
+          ...(albumCover !== undefined ? { albumCover } : {}),
+          ...(album !== undefined ? { album } : {}),
+          ...(releaseYear !== undefined ? { releaseYear } : {}),
+          ...(versionType !== undefined ? { versionType } : {}),
+          ...(versionDetails !== undefined ? { versionDetails } : {}),
+          ...(artists !== undefined ? { artists } : {}),
+        });
+      }
 
       try {
         const saved = await updateSongPreferences({
@@ -161,12 +228,16 @@ export default function SongSheetView({
           releaseYear,
           versionType,
           versionDetails,
+          artists,
           user: currentUser?.email || currentUser?.id,
           isCustom: song.isCustom,
         });
 
         if (saved?.id) {
           song.id = String(saved.id);
+        }
+        if (saved?.artists) {
+          song.artists = saved.artists;
         }
         if (SAMPLE_SONGS_DATA && song.id) {
           SAMPLE_SONGS_DATA[String(song.id)] = {
@@ -178,114 +249,37 @@ export default function SongSheetView({
         console.warn('Error saving song images and metadata:', err);
       }
     },
-    [song]
+    [song, onUpdateSong, currentUser]
   );
 
-  // Pre-computed rhythmic measures (BeatGrid) from Chordify or database syncData
-  const initialCompases = useMemo(() => {
-    if (song.compases && Array.isArray(song.compases) && song.compases.length > 0) {
-      return song.compases;
-    }
-    if (song.syncData) {
-      try {
-        const parsed = JSON.parse(song.syncData);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {
-        /* ignore */
-      }
-    }
-    return null;
-  }, [song.compases, song.syncData]);
-
-  const [activeCompases, setActiveCompases] = useState(initialCompases);
-
-  // Synchronize activeCompases if the song changes
-  useEffect(() => {
-    setActiveCompases(initialCompases);
-  }, [initialCompases, song.id]);
-
-  // Parse or retrieve pre-computed rhythmic measures (BeatGrid)
-  const parsedCompases = useMemo(() => {
-    const rawLyrics = isEditMode
-      ? draftContent
-      : isCustom && currentContent
-      ? currentContent
-      : currentContent || song.content || '';
-
-    // 1. If the song already has synchronized compases (Chordify / syncData), PRESERVE THEM and align sections!
-    if (activeCompases && activeCompases.length > 0) {
-      return alignCompasesWithSongSections(activeCompases, rawLyrics);
-    }
-    // 2. Otherwise parse from draft text or current content
-    return parseSongTextToGrid(rawLyrics || '', 4);
-  }, [activeCompases, isEditMode, draftContent, isCustom, currentContent, song.content]);
-
-  // Transpose chords in compases dynamically
-  const transposedCompases = useMemo(() => {
-    return parsedCompases.map((compas) => ({
-      ...compas,
-      acordes: compas.acordes.map((ch) => {
-        if (!ch) return ch;
-        return transpose === 0 ? normalizeChordName(ch) : transposeChord(ch, transpose);
-      }),
-    }));
-  }, [parsedCompases, transpose]);
-
-  // Cumulative beat offset for each measure to support measures with variable beat counts (e.g. 2T pickups)
-  const measureBeatOffsets = useMemo(() => {
-    let count = 0;
-    return transposedCompases.map((m) => {
-      const start = count;
-      count += m.acordes?.length || 4;
-      return start;
-    });
-  }, [transposedCompases]);
-
-  const totalBeats = useMemo(() => {
-    return transposedCompases.reduce((acc, m) => acc + (m.acordes?.length || 4), 0);
-  }, [transposedCompases]);
-
-  // Flattened beats list for real-time tracking
-  const flatBeats = useMemo(() => {
-    return transposedCompases.flatMap((m) => m.acordes);
-  }, [transposedCompases]);
-
-  // Current song BPM derived from lyrics metadata ([BPM @ 120]) with fallback
-  const currentBpm = useMemo(() => {
-    return getSongBpm(draftContent || currentContent || song.content, 100);
-  }, [draftContent, currentContent, song.content]);
-
-  // Handler to double (x2) or halve (/2) BPM while subdividing or merging measures
-  const handleScaleBpm = useCallback(
-    (factor) => {
-      const rawContent = draftContent || currentContent || song.content || '';
-      const oldBpm = getSongBpm(rawContent, 100);
-      const newBpm = Math.max(30, Math.min(300, Math.round(oldBpm * factor)));
-      const updatedText = updateTextBpm(rawContent, newBpm);
-
-      setDraftContent(updatedText);
-      setCurrentContent(updatedText);
-
-      let updatedCompases = null;
-      if (factor === 2) {
-        updatedCompases = doubleGridBpm(activeCompases || parsedCompases);
-      } else if (factor === 0.5) {
-        updatedCompases = halveGridBpm(activeCompases || parsedCompases);
-      }
-
-      if (updatedCompases && updatedCompases.length > 0) {
-        setActiveCompases(updatedCompases);
-      }
-
-      setFeedbackToast(
-        factor === 2
-          ? `BPM duplicado a ${newBpm} (compases subdivididos x2)`
-          : `BPM dividido a ${newBpm} (compases fusionados ÷2)`
-      );
-      setTimeout(() => setFeedbackToast(null), 3000);
-    },
-    [draftContent, currentContent, song.content, activeCompases, parsedCompases]
-  );
+  // Rhythm, BPM scaling and measure transposition hook
+  const {
+    initialCompases,
+    activeCompases,
+    setActiveCompases,
+    parsedCompases,
+    transposedCompases,
+    measureBeatOffsets,
+    totalBeats,
+    flatBeats,
+    currentBpm,
+    handleScaleBpm,
+    handleSetMeasureTimestamp,
+    handleAddMeasureToSection,
+    handleUpdateBeatGridChord,
+    handleChangeMeasureLength,
+    currentUniqueChords,
+  } = useSongRhythmGrid({
+    song,
+    currentContent,
+    setCurrentContent,
+    draftContent,
+    setDraftContent,
+    isEditMode,
+    isCustom,
+    transpose,
+    onNotify: setFeedbackToast,
+  });
 
   // Sync hook for tracking active beat from YouTube or metronome
   const {
@@ -304,326 +298,34 @@ export default function SongSheetView({
     externalTime,
   });
 
-  // Calculate the currently sounding chord dynamically
-  const currentPlayingChord = useMemo(() => {
-    if (currentBeatIndex >= 0 && currentBeatIndex < flatBeats.length) {
-      for (let i = currentBeatIndex; i >= 0; i--) {
-        const ch = flatBeats[i];
-        if (ch && ch !== '𝄾' && ch !== '𝄽') {
-          return ch;
-        }
-      }
-    }
-    return activeChord || song.uniqueChords?.[0] || 'C';
-  }, [currentBeatIndex, flatBeats, activeChord, song.uniqueChords]);
+  // Dynamically resolve currently sounding chord & distance to next chord
+  const { currentPlayingChord, nextChordName, beatsUntilNext } = useCurrentPlayingChord({
+    currentBeatIndex,
+    flatBeats,
+    activeChord,
+    fallbackChord: song.uniqueChords?.[0] || 'C',
+  });
 
-  // Calculate the next upcoming chord and distance in beats
-  const { nextChordName, beatsUntilNext } = useMemo(() => {
-    if (currentBeatIndex < 0 || currentBeatIndex >= flatBeats.length) {
-      return { nextChordName: null, beatsUntilNext: null };
-    }
-    const currentCh = currentPlayingChord;
-    for (let i = currentBeatIndex + 1; i < flatBeats.length; i++) {
-      const ch = flatBeats[i];
-      if (ch && ch !== '𝄾' && ch !== '𝄽' && ch !== currentCh) {
-        return {
-          nextChordName: ch,
-          beatsUntilNext: i - currentBeatIndex,
-        };
-      }
-    }
-    return { nextChordName: null, beatsUntilNext: null };
-  }, [currentBeatIndex, flatBeats, currentPlayingChord]);
+  // Dynamic chord definitions loaded and cached via useChordDefinitions
+  const {
+    chordDefinitions,
+    setChordDefinitions,
+    onVariantChangeHandler,
+  } = useChordDefinitions({
+    uniqueChords: currentUniqueChords,
+    selectedVariants,
+    instrument,
+    handleVariantChange,
+  });
 
-  const currentUniqueChords = useMemo(() => {
-    const chordsFromCompases = Array.from(
-      new Set(
-        transposedCompases
-          .flatMap((m) => m.acordes)
-          .filter((c) => c && c !== '𝄾' && c !== '𝄽')
-      )
-    );
-    if (chordsFromCompases.length > 0) return chordsFromCompases;
-
-    return (song.uniqueChords || ['C', 'G', 'Am', 'F']).map((ch) =>
-      transposeChord(ch, transpose)
-    );
-  }, [transposedCompases, song.uniqueChords, transpose]);
-
-  // Fetch chord definitions from SQLite database
-  useEffect(() => {
-    if (!currentUniqueChords || currentUniqueChords.length === 0) return;
-
-    const missingChords = currentUniqueChords.filter(
-      (ch) => ch && ch !== '𝄾' && ch !== '𝄽' && !chordDefinitions[ch]
-    );
-
-    if (missingChords.length === 0) return;
-
-    missingChords.forEach((chordName) => {
-      lookupChord(chordName, 'guitar').then((data) => {
-        if (data && data.positions && Array.isArray(data.positions) && data.positions.length > 0) {
-          const vIdx = selectedVariants[chordName] || 0;
-          const pos = data.positions[vIdx] || data.positions[0];
-          setChordDefinitions((prev) => ({
-            ...prev,
-            [chordName]: {
-              chordName,
-              frets: Array.isArray(pos.frets)
-                ? pos.frets.map((f) => (f === -1 ? 'x' : String(f))).join('')
-                : pos.frets || 'x32010',
-              fingers: Array.isArray(pos.fingers) ? pos.fingers.join('') : pos.fingers || '032010',
-              position: pos.baseFret || pos.position || 1,
-              barres: pos.barres || [],
-              allPositions: data.positions,
-              variantIndex: vIdx,
-            },
-          }));
-        } else {
-          const fallback = CHORD_DATABASE[chordName] || {
-            chordName,
-            frets: 'x32010',
-            fingers: '032010',
-            position: 1,
-            barres: [],
-          };
-          setChordDefinitions((prev) => ({
-            ...prev,
-            [chordName]: fallback,
-          }));
-        }
-      });
-    });
-  }, [currentUniqueChords, chordDefinitions, selectedVariants]);
-
-  // Reset or initialize state when song changes
+  // Reset or initialize view state when song changes
   useEffect(() => {
     setIsAutoScrolling(false);
     setIsMetronomeActive(false);
     setExternalTime(null);
-    setActiveChord(song.uniqueChords?.[0] || 'C');
-    setCurrentContent(song.content || '');
-    setIsCustom(Boolean(song.isCustom));
-    setOriginalContent(song.originalContent || null);
-    setDraftContent(song.content || '');
-    setCurrentYouTubeId(song.youtubeId || '');
-    setIsEditMode(false);
-    if (lyricsScrollRef.current) {
-      lyricsScrollRef.current.scrollTop = 0;
-    }
-  }, [song.id, song.title, song.content, song.isCustom, song.originalContent, song.youtubeId]);
-
-  const handleToggleEditMode = () => {
-    if (!isEditMode) {
-      setDraftContent(currentContent);
-    }
-    setIsEditMode((prev) => !prev);
-  };
-
-  const handleSelectYouTubeVideo = async (newYtId) => {
-    setCurrentYouTubeId(newYtId);
-    try {
-      await saveSong({
-        id: song.id,
-        title: song.title,
-        artist: song.artist,
-        youtubeId: newYtId,
-        content: currentContent,
-      });
-      setFeedbackToast('Video de YouTube vinculado');
-      setTimeout(() => setFeedbackToast(null), 2500);
-    } catch (e) {
-      console.warn('Error saving linked youtubeId:', e);
-    }
-  };
-
-  const handleSetMeasureTimestamp = (measureIdx, timestamp) => {
-    if (timestamp === null || timestamp === undefined) return;
-    const rounded = parseFloat(Number(timestamp).toFixed(1));
-    setFeedbackToast(`Compás marcado en ${rounded}s`);
-    setTimeout(() => setFeedbackToast(null), 1800);
-  };
-
-  const handleAddMeasureToSection = (sectionName) => {
-    setDraftContent((prev) => {
-      return prev + `\n[${sectionName || 'Estrofa'}]\n[𝄾 4T]\n`;
-    });
-    setFeedbackToast(`Compás añadido a [${sectionName || 'Estrofa'}]`);
-    setTimeout(() => setFeedbackToast(null), 1800);
-  };
-
-  const handleUpdateBeatGridChord = (cellGlobalIndex, newChord) => {
-    if (!newChord) return;
-    const clean = normalizeChordName(newChord);
-
-    setActiveCompases((prev) => {
-      const currentGrid = prev || parsedCompases;
-      if (!currentGrid || currentGrid.length === 0) return prev;
-
-      const measureIdx = Math.floor(cellGlobalIndex / 4);
-      const beatIdx = cellGlobalIndex % 4;
-
-      if (measureIdx < 0 || measureIdx >= currentGrid.length) return prev;
-
-      const updated = currentGrid.map((m, idx) => {
-        if (idx === measureIdx) {
-          const newAcordes = [...m.acordes];
-          newAcordes[beatIdx] = clean;
-          return { ...m, acordes: newAcordes };
-        }
-        return m;
-      });
-
-      // Si el contenido actual no tiene letra (es instrumental o puro BeatGrid), sincronizar el texto para el visualizador
-      const textWithoutTags = (currentContent || '').replace(/\[[^\]]+\]/g, '').replace(/[\s\d:.\-_/|]+/g, '');
-      const hasLyrics = textWithoutTags.length > 20;
-      if (!hasLyrics) {
-        const bpmMatch = (currentContent || '').match(/\[BPM\s*[@:]?\s*\d+\]/i);
-        const beatsMatch = (currentContent || '').match(/\[Beats\s*[@:]?\s*\d+\]/i);
-        let header = '';
-        if (bpmMatch) header += `${bpmMatch[0]}\n`;
-        if (beatsMatch) header += `${beatsMatch[0]}\n`;
-        if (header) header += '\n';
-
-        const updatedText = header + formatCompasesToText(updated);
-        setCurrentContent(updatedText);
-        setDraftContent(updatedText);
-      }
-
-      return updated;
-    });
-
-    setFeedbackToast(`Acorde [${clean}] actualizado en compás ${Math.floor(cellGlobalIndex / 4) + 1}, pulso ${(cellGlobalIndex % 4) + 1}`);
-    setTimeout(() => setFeedbackToast(null), 1500);
-  };
-
-  const handleSaveCustomVersion = async () => {
-    setIsSaving(true);
-    try {
-      const backupOriginal = originalContent || song.originalContent || song.content;
-      await saveCustomSongVersion({
-        id: song.id,
-        title: song.title,
-        artist: song.artist,
-        content: draftContent,
-        syncData: activeCompases ? JSON.stringify(activeCompases) : (song.syncData || null),
-        originalContent: backupOriginal,
-        isInstrumental: Boolean(isInstrumental || song.isInstrumental),
-        user: currentUser?.email,
-        userId: currentUser?.id,
-      });
-
-      setCurrentContent(draftContent);
-      setIsCustom(true);
-      if (!originalContent) {
-        setOriginalContent(backupOriginal);
-      }
-      setIsEditMode(false);
-      setFeedbackToast('¡Cambios guardados con éxito!');
-      setTimeout(() => setFeedbackToast(null), 2500);
-    } catch (err) {
-      console.error('[SongSheetView] Error saving song:', err);
-      setFeedbackToast(err.message || 'Error al guardar la canción');
-      setTimeout(() => setFeedbackToast(null), 3000);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleMarkAsInstrumental = async (newContent, targetIsInstrumental = true) => {
-    setIsInstrumental(targetIsInstrumental);
-    const contentToSave = newContent || draftContent;
-    setDraftContent(contentToSave);
-    setCurrentContent(contentToSave);
-
-    try {
-      const backupOriginal = originalContent || song.originalContent || song.content;
-      await saveCustomSongVersion({
-        id: song.id,
-        title: song.title,
-        artist: song.artist,
-        content: contentToSave,
-        syncData: activeCompases ? JSON.stringify(activeCompases) : (song.syncData || null),
-        originalContent: backupOriginal,
-        isInstrumental: targetIsInstrumental,
-        user: currentUser?.email,
-        userId: currentUser?.id,
-      });
-      setFeedbackToast(targetIsInstrumental ? '¡Canción configurada como instrumental!' : '¡Letra añadida a la canción!');
-      setTimeout(() => setFeedbackToast(null), 2500);
-    } catch (err) {
-      console.error('[SongSheetView] Error updating instrumental state:', err);
-      setFeedbackToast(err.message || 'Error al actualizar la canción');
-      setTimeout(() => setFeedbackToast(null), 3000);
-    }
-  };
-
-  const handleRestoreOriginal = async () => {
-    setIsSaving(true);
-    try {
-      const res = await restoreOriginalSong({
-        id: song.id,
-        title: song.title,
-        artist: song.artist,
-        user: currentUser?.email,
-        userId: currentUser?.id,
-      });
-      const restoredText = res?.song?.content || originalContent || song.originalContent;
-      if (restoredText) {
-        setCurrentContent(restoredText);
-        setDraftContent(restoredText);
-      }
-      setIsCustom(false);
-      setIsInstrumental(Boolean(res?.song?.isInstrumental));
-      setIsEditMode(false);
-      setFeedbackToast('Versión original restaurada');
-      setTimeout(() => setFeedbackToast(null), 2500);
-    } catch (err) {
-      console.error('[SongSheetView] Error restoring song:', err);
-      setFeedbackToast(err.message || 'Error al restaurar la canción');
-      setTimeout(() => setFeedbackToast(null), 3000);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Auto-scroll logic
-  useEffect(() => {
-    let scrollInterval = null;
-    if (isAutoScrolling && lyricsScrollRef.current) {
-      scrollInterval = setInterval(() => {
-        if (lyricsScrollRef.current) {
-          lyricsScrollRef.current.scrollTop += scrollSpeed * 1;
-        }
-      }, 50);
-    }
-    return () => {
-      if (scrollInterval) clearInterval(scrollInterval);
-    };
-  }, [isAutoScrolling, scrollSpeed]);
-
-  const onVariantChangeHandler = (chordName, newVariantIndex) => {
-    handleVariantChange(chordName, newVariantIndex, (clean, vIdx) => {
-      setChordDefinitions((prev) => {
-        const existing = prev[clean];
-        if (existing && existing.allPositions && existing.allPositions[vIdx]) {
-          const pos = existing.allPositions[vIdx];
-          return {
-            ...prev,
-            [clean]: {
-              ...existing,
-              frets: Array.isArray(pos.frets) ? pos.frets.map((f) => (f === -1 ? 'x' : String(f))).join('') : pos.frets || 'x32010',
-              fingers: Array.isArray(pos.fingers) ? pos.fingers.join('') : pos.fingers || '032010',
-              position: pos.baseFret || pos.position || 1,
-              barres: pos.barres || [],
-              variantIndex: vIdx,
-            },
-          };
-        }
-        return prev;
-      });
-    });
-  };
+    setActiveChord(song?.uniqueChords?.[0] || 'C');
+    resetScroll();
+  }, [song?.id, song?.title, resetScroll, setIsAutoScrolling]);
 
   const handlePlayChord = useCallback(
     (chordName) => {
@@ -726,6 +428,7 @@ export default function SongSheetView({
       if (!chordName || chordName === '𝄾' || chordName === '𝄽') return;
 
       handlePlayChord(chordName);
+      if (!chordContext) return;
 
       // 1. Direct Beat Mapping: if chordContext has exact beatIdx from lineTimingsMap
       if (chordContext?.beatIdx !== undefined && chordContext?.beatIdx !== null && chordContext.beatIdx >= 0) {
@@ -1064,7 +767,7 @@ export default function SongSheetView({
         </div>
 
         {/* ================= MAIN DUAL PAGE SPREAD ================= */}
-        <div className="w-full flex-1 min-w-0 flex flex-col md:flex-row min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] relative z-10">
+        <div className="w-full flex-1 min-w-0 flex flex-col md:flex-row h-[580px] xl:h-[640px] 2xl:h-[700px] min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] max-h-[580px] xl:max-h-[640px] 2xl:max-h-[700px] relative z-10">
           {/* ================= ANALOG DESK MEMORABILIA (POLAROID & CD) ================= */}
           <SongMemorabiliaDesk
             song={{
@@ -1084,40 +787,63 @@ export default function SongSheetView({
               draftContent={draftContent}
               setDraftContent={setDraftContent}
               uniqueChords={currentUniqueChords}
-              onSave={handleSaveCustomVersion}
-              onCancel={() => setIsEditMode(false)}
+              onSave={() => {
+                setActiveStampChord(null);
+                handleSaveCustomVersion(activeCompases || parsedCompases);
+              }}
+              onCancel={() => {
+                setIsEditMode(false);
+                setActiveStampChord(null);
+                setDraftContent(currentContent);
+                setActiveCompases(initialCompases);
+              }}
               onRestoreOriginal={handleRestoreOriginal}
               hasOriginal={Boolean(originalContent || song.originalContent)}
               isSaving={isSaving}
-              isSyncMode={isSyncMode}
-              onToggleSyncMode={() => setIsSyncMode(!isSyncMode)}
               currentPlaybackTime={currentTime}
               activeSectionName={
-                currentBeatIndex >= 0 && transposedCompases[Math.floor(currentBeatIndex / 4)]
-                  ? transposedCompases[Math.floor(currentBeatIndex / 4)].seccion
+                currentBeatIndex >= 0
+                  ? (() => {
+                      const activeCompas = transposedCompases.find((c, mIdx) => {
+                        const start = measureBeatOffsets[mIdx] ?? mIdx * 4;
+                        const len = c?.acordes?.length || 4;
+                        return currentBeatIndex >= start && currentBeatIndex < start + len;
+                      });
+                      return activeCompas?.seccion || null;
+                    })()
                   : null
               }
               onSelectSection={handleSelectSection}
-              onSelectChord={handlePlayChord}
+              onSelectChord={handleSelectChordFromLyrics}
               isInstrumental={isInstrumental}
-              onMarkAsInstrumental={handleMarkAsInstrumental}
+              onMarkAsInstrumental={(content, isInstr) => handleMarkAsInstrumental(content, isInstr, activeCompases || parsedCompases)}
               currentBpm={currentBpm}
               onScaleBpm={handleScaleBpm}
+              playerInstance={playerInstance}
+              youtubeId={currentYouTubeId || song.youtubeId || ''}
+              onSaveCompases={setActiveCompases}
+              activeStampChord={activeStampChord}
+              onChangeActiveStampChord={setActiveStampChord}
+              compases={activeCompases || parsedCompases}
+              currentBeatIndex={currentBeatIndex}
+              isPlaybackActive={isPlaybackActive}
             />
           ) : (
-            <div className={`${mobilePage === 'lyrics' ? 'flex' : 'hidden'} md:flex flex-col justify-between flex-1 min-w-0 bg-[#fcf9f2] rounded-2xl md:rounded-r-none md:rounded-l-2xl shadow-[inset_-10px_0_15px_rgba(0,0,0,0.06)] border border-stone-300 md:border-r-0 overflow-hidden paper-texture p-7 lg:p-9 min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] relative z-10`}>
+            <div className={`${mobilePage === 'lyrics' ? 'flex' : 'hidden'} md:flex flex-col flex-1 min-w-0 bg-[#fcf9f2] rounded-2xl md:rounded-r-none md:rounded-l-2xl shadow-[inset_-10px_0_15px_rgba(0,0,0,0.06)] border border-stone-300 md:border-r-0 overflow-hidden paper-texture p-7 lg:p-9 h-[580px] xl:h-[640px] 2xl:h-[700px] min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] max-h-[580px] xl:max-h-[640px] 2xl:max-h-[700px] relative z-10`}>
               <div className="absolute top-0 right-0 bottom-0 w-10 bg-gradient-to-l from-stone-900/10 to-transparent pointer-events-none z-10" />
 
-              <div>
-                {/* Header Controls */}
+              {/* Header Controls */}
+              <div className="flex-shrink-0">
                 <SongHeaderControls
                   song={{ ...song, content: currentContent, isCustom, originalContent, youtubeId: currentYouTubeId }}
                   onBack={onBack}
                   setlistContext={setlistContext}
                   isFavorite={isFavorite}
-                  onToggleFavorite={onToggleFavorite}
+                  onToggleFavorite={handleGuardedToggleFavorite}
+                  isSaved={isSaved}
+                  onToggleSaveSong={handleGuardedToggleSave}
                   setlists={setlists}
-                  onAddSongToSetlist={onAddSongToSetlist}
+                  onAddSongToSetlist={handleGuardedAddToSetlist}
                   transpose={transpose}
                   onTranspose={handleTransposeClamped}
                   isPitchShiftActive={isPitchShiftActive}
@@ -1135,24 +861,25 @@ export default function SongSheetView({
                   isEditMode={isEditMode}
                   onToggleEditMode={handleToggleEditMode}
                 />
-
-                {/* Lyrics & Chords Renderer */}
-                <SongLyricsRenderer
-                  song={{ ...song, content: currentContent, isCustom, originalContent }}
-                  compases={transposedCompases}
-                  transpose={transpose}
-                  onPlayChord={handlePlayChord}
-                  onSelectSection={handleSelectSection}
-                  onSelectChord={handleSelectChordFromLyrics}
-                  isAutoScrolling={isAutoScrolling}
-                  onToggleAutoScroll={() => setIsAutoScrolling(!isAutoScrolling)}
-                  scrollRef={lyricsScrollRef}
-                  currentTime={currentTime}
-                  currentPlayingChord={currentPlayingChord}
-                  currentBeatIndex={currentBeatIndex}
-                  isPlaybackActive={isPlaybackActive}
-                />
               </div>
+
+              {/* Lyrics & Chords Renderer */}
+              <SongLyricsRenderer
+                className="flex-1 mt-2"
+                song={{ ...song, content: currentContent, isCustom, originalContent }}
+                compases={transposedCompases}
+                transpose={transpose}
+                onPlayChord={handlePlayChord}
+                onSelectSection={handleSelectSection}
+                onSelectChord={handleSelectChordFromLyrics}
+                isAutoScrolling={isAutoScrolling}
+                onToggleAutoScroll={() => setIsAutoScrolling(!isAutoScrolling)}
+                scrollRef={lyricsScrollRef}
+                currentTime={currentTime}
+                currentPlayingChord={currentPlayingChord}
+                currentBeatIndex={currentBeatIndex}
+                isPlaybackActive={isPlaybackActive}
+              />
             </div>
           )}
 
@@ -1201,8 +928,10 @@ export default function SongSheetView({
             onSetTimestamp={handleSetMeasureTimestamp}
             onAddMeasure={handleAddMeasureToSection}
             onUpdateChord={handleUpdateBeatGridChord}
+            onChangeMeasureLength={handleChangeMeasureLength}
             currentBpm={currentBpm}
             onScaleBpm={handleScaleBpm}
+            activeStampChord={activeStampChord}
           />
         </div>
 
@@ -1242,6 +971,72 @@ export default function SongSheetView({
           )}
         </AnimatePresence>
       </div>
+
+      {/* ================= MODAL DE INICIO DE SESIÓN REQUERIDO ================= */}
+      <AnimatePresence>
+        {showAuthRequiredModal && (
+          <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs select-none">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.93, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.93, y: 12 }}
+              className="relative w-full max-w-md bg-[#fcf9f2] rounded-3xl border-4 border-[#35251d] p-6 shadow-2xl paper-texture text-center space-y-4 z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 shadow-sm">
+                <Sparkles className="w-7 h-7" />
+              </div>
+
+              <div className="space-y-1.5">
+                <h3 className="text-xl font-serif font-black text-stone-900 tracking-tight">
+                  Iniciá sesión para guardar tus canciones
+                </h3>
+                <p className="text-xs sm:text-sm font-sans text-stone-600 leading-relaxed px-2">
+                  Para marcar canciones como favoritas y organizar tus propios repertorios (setlists), necesitás ingresar a tu cuaderno de músico.
+                </p>
+              </div>
+
+              <div className="pt-2 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAuthRequiredModal(false);
+                    if (onNavigateAuth) {
+                      onNavigateAuth('register');
+                    } else {
+                      onBack();
+                    }
+                  }}
+                  className="w-full py-2.5 px-4 bg-gradient-to-r from-amber-700 to-amber-900 hover:from-amber-800 hover:to-amber-950 text-white rounded-xl font-sans font-bold text-sm shadow-md transition-all cursor-pointer"
+                >
+                  Crear Cuenta Gratis
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAuthRequiredModal(false);
+                    if (onNavigateAuth) {
+                      onNavigateAuth('login');
+                    } else {
+                      onBack();
+                    }
+                  }}
+                  className="w-full py-2 px-4 bg-stone-200/80 hover:bg-stone-300/80 text-stone-800 rounded-xl font-sans font-bold text-xs transition cursor-pointer"
+                >
+                  Ya tengo cuenta: Iniciar Sesión
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAuthRequiredModal(false)}
+                  className="w-full py-1.5 px-4 bg-transparent hover:bg-stone-200/60 text-stone-500 hover:text-stone-700 rounded-xl font-sans font-medium text-xs transition cursor-pointer"
+                >
+                  Seguir tocando en Modo Libre
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* ================= FLOATING / PINNED PAPER SCRAP WITH YOUTUBE VIDEO ================= */}
       <FloatingVideoPaper

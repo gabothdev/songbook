@@ -4,6 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import prisma from '../services/db.js';
+import { getChordifyBeatGrid } from '../services/chordify-scraper.js';
+import { parseChordifyMeasuresAndLyrics } from '../services/chordify/measureParser.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -34,6 +36,8 @@ const MODEL_MAPPING = {
   userpreferences: 'userSongPreference',
   usersongpreferences: 'userSongPreference',
   usersongpreference: 'userSongPreference',
+  chordifycache: 'chordifyCache',
+  chordifycaches: 'chordifyCache',
 };
 
 function getModelDelegate(tableName) {
@@ -69,6 +73,7 @@ router.get('/stats', async (req, res) => {
       customChordCount,
       chordDefCount,
       scoreSheetCount,
+      chordifyCacheCount,
     ] = await Promise.all([
       prisma.song.count(),
       prisma.artist.count(),
@@ -81,6 +86,7 @@ router.get('/stats', async (req, res) => {
       prisma.customChord.count(),
       prisma.chordDefinition.count(),
       prisma.scoreSheet.count(),
+      prisma.chordifyCache.count(),
     ]);
 
     res.json({
@@ -103,6 +109,7 @@ router.get('/stats', async (req, res) => {
         customchords: customChordCount,
         chorddefinitions: chordDefCount,
         scoresheets: scoreSheetCount,
+        chordifycache: chordifyCacheCount,
       },
       server: {
         uptime: process.uptime(),
@@ -210,6 +217,7 @@ router.get('/tables/:table', async (req, res) => {
             { title: { contains: search } },
             { artist: { contains: search } },
             { album: { contains: search } },
+            { genre: { contains: search } },
             { youtubeId: { contains: search } },
             { content: { contains: search } },
             { artists: { some: { name: { contains: search } } } },
@@ -244,6 +252,10 @@ router.get('/tables/:table', async (req, res) => {
         conditions.push({
           scoreSheets: { some: {} },
         });
+      } else if (filter === 'pending') {
+        conditions.push({ verified: false });
+      } else if (filter === 'verified') {
+        conditions.push({ verified: true });
       }
 
       if (conditions.length === 1) {
@@ -303,6 +315,14 @@ router.get('/tables/:table', async (req, res) => {
           OR: [
             { chordName: { contains: search } },
             { instrument: { contains: search } },
+          ],
+        };
+      } else if (modelName === 'chordifyCache') {
+        where = {
+          OR: [
+            { youtubeId: { contains: search } },
+            { title: { contains: search } },
+            { artist: { contains: search } },
           ],
         };
       }
@@ -414,8 +434,9 @@ router.get('/tables/:table/:id', async (req, res) => {
   }
 
   try {
+    const whereClause = lookup.modelName === 'chordifyCache' ? { youtubeId: id } : { id };
     const item = await lookup.delegate.findUnique({
-      where: { id },
+      where: whereClause,
       ...(lookup.modelName === 'setlist'
         ? {
             include: {
@@ -486,19 +507,23 @@ router.get('/tables/:table/:id', async (req, res) => {
 });
 
 // Helper para vincular múltiples artistas al guardar una canción
-async function handleSongArtists(data) {
-  let names = null;
+async function handleSongArtists(data, isCreate = false) {
+  let rawNames = null;
   if (Array.isArray(data.artistNames)) {
-    names = data.artistNames;
+    rawNames = data.artistNames;
   } else if (Array.isArray(data.artists)) {
-    names = data.artists.map((a) => (typeof a === 'string' ? a : a?.name)).filter(Boolean);
+    rawNames = data.artists.map((a) => (typeof a === 'string' ? a : a?.name)).filter(Boolean);
+  } else if (typeof data.artist === 'string' && data.artist.trim()) {
+    rawNames = data.artist.split(',').map((s) => s.trim()).filter(Boolean);
   }
 
-  if (names && names.length > 0) {
+  if (rawNames && rawNames.length > 0) {
+    // Aplanar cualquier elemento que contenga comas y desduplicar
+    const flatNames = rawNames.flatMap((n) => (typeof n === 'string' ? n.split(',').map((s) => s.trim()) : [])).filter(Boolean);
+    const uniqueNames = [...new Set(flatNames)];
+
     const connected = [];
-    for (const name of names) {
-      const cleanName = name.trim();
-      if (!cleanName) continue;
+    for (const cleanName of uniqueNames) {
       const artist = await prisma.artist.upsert({
         where: { name: cleanName },
         update: {},
@@ -506,12 +531,81 @@ async function handleSongArtists(data) {
       });
       connected.push({ id: artist.id });
     }
-    data.artists = { set: connected };
-    data.artist = names.join(', ');
-  } else if (names && names.length === 0) {
-    data.artists = { set: [] };
+    data.artists = isCreate ? { connect: connected } : { set: connected };
+    data.artist = uniqueNames.join(', ');
+  } else if (rawNames && rawNames.length === 0) {
+    if (isCreate) {
+      delete data.artists;
+    } else {
+      data.artists = { set: [] };
+    }
   }
   delete data.artistNames;
+}
+
+// Helper para vincular o sincronizar el Álbum canónico al guardar una canción
+async function handleSongAlbum(data) {
+  // Asegurar que releaseYear sea numérico o null
+  if ('releaseYear' in data) {
+    data.releaseYear = data.releaseYear !== '' && data.releaseYear !== null && !isNaN(Number(data.releaseYear))
+      ? parseInt(data.releaseYear, 10)
+      : null;
+  }
+
+  if (typeof data.album === 'string' && data.album.trim()) {
+    const albumTitle = data.album.trim();
+    let artistId = null;
+
+    if (data.artists?.set && data.artists.set.length > 0) {
+      artistId = data.artists.set[0].id;
+    } else if (data.artists?.connect && data.artists.connect.length > 0) {
+      artistId = data.artists.connect[0].id;
+    } else if (data.artist) {
+      const primaryArtistName = data.artist.split(',')[0].trim();
+      if (primaryArtistName) {
+        const art = await prisma.artist.findUnique({ where: { name: primaryArtistName } });
+        if (art) artistId = art.id;
+      }
+    }
+
+    if (artistId) {
+      let album = await prisma.album.findFirst({
+        where: {
+          artistId,
+          title: albumTitle,
+        },
+      });
+
+      if (!album) {
+        album = await prisma.album.create({
+          data: {
+            title: albumTitle,
+            cover: data.albumCover || null,
+            releaseYear: data.releaseYear || null,
+            versionType: data.versionType || 'studio',
+            versionDetails: data.versionDetails || null,
+            artistId,
+          },
+        });
+      } else {
+        const updateData = {};
+        if (data.albumCover && data.albumCover !== album.cover) updateData.cover = data.albumCover;
+        if (data.releaseYear !== undefined && data.releaseYear !== album.releaseYear) updateData.releaseYear = data.releaseYear;
+        if (data.versionType && data.versionType !== album.versionType) updateData.versionType = data.versionType;
+        if (data.versionDetails !== undefined && data.versionDetails !== album.versionDetails) updateData.versionDetails = data.versionDetails;
+        if (Object.keys(updateData).length > 0) {
+          album = await prisma.album.update({
+            where: { id: album.id },
+            data: updateData,
+          });
+        }
+      }
+
+      data.albumId = album.id;
+    }
+  } else if (data.album === '' || data.album === null) {
+    data.albumId = null;
+  }
 }
 
 // Helper para limpiar campos calculados y relaciones que no son columnas directas
@@ -592,25 +686,55 @@ router.post('/tables/:table', async (req, res) => {
     const data = { ...req.body };
 
     if (lookup.modelName === 'song') {
-      await handleSongArtists(data);
-    }
-    sanitizeIncomingData(lookup.modelName, data);
+      // Evitar canciones duplicadas si ya existe por id, youtubeId o combinación de título y artista
+      let existingSong = null;
+      if (data.id) {
+        existingSong = await prisma.song.findUnique({ where: { id: data.id } }).catch(() => null);
+      }
+      if (!existingSong && data.youtubeId) {
+        existingSong = await prisma.song.findFirst({ where: { youtubeId: data.youtubeId } });
+      }
+      if (!existingSong && data.title && data.artist) {
+        existingSong = await prisma.song.findFirst({
+          where: {
+            title: { equals: data.title.trim() },
+            artist: { equals: data.artist.trim() }
+          }
+        });
+      }
 
-    // Normalizar campos JSON si vienen como objetos
-    if (data.syncData && typeof data.syncData === 'object') {
-      data.syncData = JSON.stringify(data.syncData);
-    }
-    if (data.chordVariants && typeof data.chordVariants === 'object') {
-      data.chordVariants = JSON.stringify(data.chordVariants);
-    }
-    if (data.positions && typeof data.positions === 'object') {
-      data.positions = JSON.stringify(data.positions);
-    }
-    if (data.tracks && typeof data.tracks === 'object') {
-      data.tracks = JSON.stringify(data.tracks);
-    }
-    if (data.songData && typeof data.songData === 'object') {
-      data.songData = JSON.stringify(data.songData);
+      const isCreate = !existingSong;
+      await handleSongArtists(data, isCreate);
+      await handleSongAlbum(data);
+      sanitizeIncomingData(lookup.modelName, data);
+
+      // Normalizar campos JSON si vienen como objetos
+      if (data.syncData && typeof data.syncData === 'object') {
+        data.syncData = JSON.stringify(data.syncData);
+      }
+      if (data.chordVariants && typeof data.chordVariants === 'object') {
+        data.chordVariants = JSON.stringify(data.chordVariants);
+      }
+      if (data.positions && typeof data.positions === 'object') {
+        data.positions = JSON.stringify(data.positions);
+      }
+      if (data.tracks && typeof data.tracks === 'object') {
+        data.tracks = JSON.stringify(data.tracks);
+      }
+      if (data.songData && typeof data.songData === 'object') {
+        data.songData = JSON.stringify(data.songData);
+      }
+
+      if (existingSong) {
+        const updated = await prisma.song.update({
+          where: { id: existingSong.id },
+          data,
+          include: { artists: true, albumRel: true }
+        });
+        return res.status(200).json(updated);
+      }
+    } else {
+      sanitizeIncomingData(lookup.modelName, data);
     }
 
     const created = await lookup.delegate.create({
@@ -639,7 +763,8 @@ router.put('/tables/:table/:id', async (req, res) => {
     const data = { ...req.body };
 
     if (lookup.modelName === 'song') {
-      await handleSongArtists(data);
+      await handleSongArtists(data, false);
+      await handleSongAlbum(data);
     }
     sanitizeIncomingData(lookup.modelName, data);
 
@@ -660,8 +785,9 @@ router.put('/tables/:table/:id', async (req, res) => {
       data.songData = JSON.stringify(data.songData);
     }
 
+    const whereClause = lookup.modelName === 'chordifyCache' ? { youtubeId: id } : { id };
     const updated = await lookup.delegate.update({
-      where: { id },
+      where: whereClause,
       data,
       ...(lookup.modelName === 'song' ? { include: { artists: true, albumRel: true } } : {}),
       ...(lookup.modelName === 'artist' ? { include: { songs: { select: { id: true, title: true, artist: true, youtubeId: true } } } } : {}),
@@ -685,8 +811,9 @@ router.delete('/tables/:table/:id', async (req, res) => {
   }
 
   try {
+    const whereClause = lookup.modelName === 'chordifyCache' ? { youtubeId: id } : { id };
     await lookup.delegate.delete({
-      where: { id },
+      where: whereClause,
     });
     res.json({ success: true, message: `Registro ${id} eliminado de ${table}` });
   } catch (error) {
@@ -758,6 +885,516 @@ router.post('/backup', async (req, res) => {
     });
   } catch (error) {
     console.error('[Dev API] Error en /backup:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 9. Promover acorde personalizado al catálogo oficial (ChordDefinition)
+router.post('/customchords/promote', async (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: 'Falta el id del acorde' });
+
+  try {
+    const custom = await prisma.customChord.findUnique({ where: { id } });
+    if (!custom) return res.status(404).json({ error: 'Acorde no encontrado' });
+
+    let incomingPositions = [];
+    try {
+      const parsed = JSON.parse(custom.data);
+      incomingPositions = Array.isArray(parsed) ? parsed : [parsed];
+    } catch (e) {
+      incomingPositions = [];
+    }
+
+    if (incomingPositions.length === 0) {
+      return res.status(400).json({ error: 'El acorde no tiene posiciones válidas' });
+    }
+
+    // Inferir key y suffix a partir de chordName
+    const match = custom.chordName.match(/^([A-G][b#]?)(.*)$/);
+    const key = match ? match[1] : 'C';
+    let suffix = match ? match[2] : '';
+    if (!suffix) suffix = 'major';
+
+    // Buscar si ya existe en el catálogo oficial
+    const existingOfficial = await prisma.chordDefinition.findFirst({
+      where: {
+        instrument: custom.instrument,
+        chordName: custom.chordName,
+      },
+    });
+
+    const normalizeFrets = (f) => {
+      if (!f) return '';
+      if (Array.isArray(f)) return f.map(x => (x === -1 || x === '' || x === 'x' || x === 'X') ? 'x' : String(x).toLowerCase()).join('');
+      return String(f).toLowerCase().replace(/\s+/g, '');
+    };
+    const arePosEqual = (a, b) => {
+      if (!a || !b) return false;
+      if (normalizeFrets(a.frets) !== normalizeFrets(b.frets)) return false;
+      return Number(a.position || a.baseFret || 1) === Number(b.position || b.baseFret || 1);
+    };
+
+    let officialResult;
+    if (existingOfficial) {
+      let currentPositions = [];
+      try {
+        const parsed = JSON.parse(existingOfficial.positions);
+        currentPositions = Array.isArray(parsed) ? parsed : [parsed];
+      } catch (e) {
+        currentPositions = [];
+      }
+
+      // Fusionar posiciones sin duplicar
+      for (const pos of incomingPositions) {
+        if (!currentPositions.some(p => arePosEqual(p, pos))) {
+          currentPositions.push(pos);
+        }
+      }
+
+      officialResult = await prisma.chordDefinition.update({
+        where: { id: existingOfficial.id },
+        data: { positions: JSON.stringify(currentPositions) },
+      });
+    } else {
+      officialResult = await prisma.chordDefinition.create({
+        data: {
+          instrument: custom.instrument,
+          key,
+          suffix,
+          chordName: custom.chordName,
+          positions: JSON.stringify(incomingPositions),
+        },
+      });
+    }
+
+    // Eliminar de CustomChord tras la promoción oficial (acordado con el usuario)
+    await prisma.customChord.delete({ where: { id: custom.id } });
+
+    res.json({
+      success: true,
+      message: `El acorde ${custom.chordName} fue promovido al catálogo oficial con éxito.`,
+      officialChord: officialResult,
+    });
+  } catch (error) {
+    console.error('[Dev API] Error al promover acorde custom:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 10. Alternar estado de verificación de acorde personalizado
+router.patch('/customchords/:id/toggle-verify', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const custom = await prisma.customChord.findUnique({ where: { id } });
+    if (!custom) return res.status(404).json({ error: 'Acorde no encontrado' });
+
+    const updated = await prisma.customChord.update({
+      where: { id },
+      data: { verified: !custom.verified },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper interno para formatear compases a texto de respaldo si no hay leadSheetText
+function formatCompasesToFallbackText(compases = []) {
+  let textOutput = '';
+  let lastSection = '';
+  for (let i = 0; i < compases.length; i++) {
+    const compas1 = compases[i];
+    if (compas1.seccion && compas1.seccion !== lastSection) {
+      const timeStr = compas1.secTime !== undefined && compas1.secTime !== null ? ` @ ${Number(compas1.secTime).toFixed(1)}` : '';
+      textOutput += `\n[${compas1.seccion}${timeStr}]\n`;
+      lastSection = compas1.seccion;
+    }
+    const isAllRest1 = (compas1.acordes || []).every((ch) => !ch || ch === '𝄾' || ch === '𝄽');
+    if (isAllRest1) {
+      textOutput += `[𝄾 (${(compas1.acordes || []).length}T)]\n`;
+      continue;
+    }
+    const formatChords = (c) => {
+      if (!c || !c.acordes) return '';
+      const distinct = [];
+      let lastCh = null;
+      c.acordes.forEach((ch) => {
+        const clean = (ch || '').trim();
+        if (!clean) return;
+        if (clean !== lastCh) {
+          distinct.push(clean);
+          lastCh = clean;
+        }
+      });
+      return distinct.length === 0 ? '[𝄾]' : distinct.map((ch) => `[${ch}]`).join(' ');
+    };
+    const compas2 = i + 1 < compases.length && compases[i + 1].seccion === compas1.seccion ? compases[i + 1] : null;
+    const str1 = formatChords(compas1);
+    const str2 = compas2 ? formatChords(compas2) : '';
+    textOutput += str2 ? `${str1}   ${str2}\n` : `${str1}\n`;
+    if (compas2) i++;
+  }
+  return textOutput.trim();
+}
+
+// 11. Catálogo local de canciones y caché de Chordify para el Laboratorio de Testeo
+router.get('/chordify-test/catalog', async (req, res) => {
+  try {
+    const [songs, cachedItems] = await Promise.all([
+      prisma.song.findMany({
+        where: {
+          youtubeId: { not: null },
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          id: true,
+          title: true,
+          artist: true,
+          youtubeId: true,
+          content: true,
+          syncData: true,
+          isInstrumental: true,
+          updatedAt: true,
+        },
+      }),
+      prisma.chordifyCache.findMany({
+        orderBy: { updatedAt: 'desc' },
+      }),
+    ]);
+
+    const parsedSongs = songs
+      .filter((s) => s.youtubeId && s.youtubeId.trim() !== '')
+      .map((s) => {
+        let compases = [];
+        try {
+          compases = s.syncData ? JSON.parse(s.syncData) : [];
+        } catch (e) {
+          compases = [];
+        }
+        const bpmMatch = (s.content || '').match(/\[BPM\s*@\s*(\d+(?:\.\d+)?)\]/i);
+        const beatsMatch = (s.content || '').match(/\[Beats\s*@\s*(\d+)\]/i);
+        return {
+          sourceType: 'song',
+          id: s.id,
+          youtubeId: s.youtubeId,
+          title: s.title,
+          artist: s.artist,
+          bpm: bpmMatch ? Number(bpmMatch[1]) : 120,
+          barLength: beatsMatch ? Number(beatsMatch[1]) : 4,
+          hasLyrics: Boolean(s.content && !s.isInstrumental),
+          isInstrumental: Boolean(s.isInstrumental),
+          content: s.content,
+          compases,
+          measuresCount: compases.length,
+          updatedAt: s.updatedAt,
+        };
+      });
+
+    res.json({
+      songs: parsedSongs,
+      chordifyCache: cachedItems,
+    });
+  } catch (error) {
+    console.error('[Dev API] Error en /chordify-test/catalog:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 11b. Inspección rápida por GET de un youtubeId en Chordify
+router.get('/chordify-test/inspect/:youtubeId', async (req, res) => {
+  try {
+    const { youtubeId } = req.params;
+    const updateDb = req.query.updateDb === '1' || req.query.updateDb === 'true';
+    const fromStepFile = req.query.fromStepFile;
+    let scraped;
+
+    if (fromStepFile && fs.existsSync(fromStepFile)) {
+      const rawFile = fs.readFileSync(fromStepFile, 'utf-8');
+      const jsonStart = rawFile.indexOf('{');
+      scraped = JSON.parse(jsonStart >= 0 ? rawFile.slice(jsonStart) : rawFile);
+    } else {
+      scraped = await getChordifyBeatGrid(youtubeId, null, null, {
+        captureScreenshots: false,
+        includeRawData: true,
+        skipCacheSave: !updateDb,
+      });
+    }
+
+    // Asegurar que siempre se aplique el parser actualizado de measureParser.js (con compases de silencio inicial 𝄾)
+    const allBeats = scraped?.rawDiagnostics?.allBeats || scraped?.rawDiagnostics?.beats;
+    if (Array.isArray(allBeats) && allBeats.length > 0) {
+      const { pathToFileURL } = await import('url');
+      const parserUrl = `${pathToFileURL(path.resolve(__dirname, '../services/chordify/measureParser.js')).href}?t=${Date.now()}`;
+      const { parseChordifyMeasuresAndLyrics: freshParse } = await import(parserUrl);
+
+      const chordsStr = allBeats
+        .map((b) => `${b.beatNum};${b.rawChord};${b.startTime};${b.endTime}`)
+        .join('\n');
+      const rawLeadSheetValue =
+        scraped.rawDiagnostics.rawHydrationLeadSheet ||
+        (scraped.rawDiagnostics.rawSectionsStructured || []).map((sec) => ({
+          title: sec.title,
+          content: (sec.lines || []).map((l) =>
+            l.type === 'lyricLine'
+              ? {
+                  start: Math.round((l.startTime || 0) * 1000),
+                  end: Math.round((l.endTime || 0) * 1000),
+                  line: { lyricLine: { lyrics: l.rawLyrics, chords: l.rawChords } },
+                }
+              : {
+                  start: Math.round((l.startTime || 0) * 1000),
+                  end: Math.round((l.endTime || 0) * 1000),
+                  line: { chordsLine: { chords: l.rawChords } },
+                }
+          ),
+        }));
+
+      const reparsed = freshParse(
+        {
+          title: scraped.title,
+          artist: scraped.artist,
+          lyricsType: scraped.lyricsType,
+          chords: {
+            value: {
+              barLength: scraped.barLength,
+              chords: chordsStr,
+              chordInfo: scraped.rawDiagnostics.chordInfo,
+            },
+          },
+          leadSheet: { data: { value: rawLeadSheetValue } },
+        },
+        { fallbackTitle: scraped.title, fallbackArtist: scraped.artist }
+      );
+
+      scraped.compases = reparsed.compases;
+      scraped.leadSheetText = reparsed.leadSheetText;
+      scraped.rawDiagnostics = {
+        ...scraped.rawDiagnostics,
+        ...reparsed.diagnostics,
+      };
+    }
+
+    let updatedSongsCount = 0;
+    if (updateDb && scraped.leadSheetText) {
+      const bpmTag = `[BPM @ ${scraped.bpm || 120}]\n[Beats @ ${scraped.barLength || 4}]\n\n`;
+      const fullContent = bpmTag + scraped.leadSheetText;
+      await prisma.chordifyCache.upsert({
+        where: { youtubeId },
+        update: {
+          hasLyrics: true,
+          lyricsType: scraped.lyricsType || 'synced',
+          title: scraped.title || youtubeId,
+          artist: scraped.artist || null,
+          bpm: Number(scraped.bpm) || 120,
+          leadSheetText: scraped.leadSheetText,
+        },
+        create: {
+          youtubeId,
+          hasLyrics: true,
+          lyricsType: scraped.lyricsType || 'synced',
+          title: scraped.title || youtubeId,
+          artist: scraped.artist || null,
+          bpm: Number(scraped.bpm) || 120,
+          leadSheetText: scraped.leadSheetText,
+        },
+      });
+      const matchingSongs = await prisma.song.findMany({ where: { youtubeId }, select: { id: true } });
+      const updateRes = await prisma.song.updateMany({
+        where: { youtubeId },
+        data: {
+          content: fullContent,
+          originalContent: fullContent,
+          isCustom: false,
+          syncData: JSON.stringify(scraped.compases || []),
+        },
+      });
+      updatedSongsCount = updateRes.count;
+      if (matchingSongs.length > 0) {
+        await prisma.userSongPreference.updateMany({
+          where: { songId: { in: matchingSongs.map((s) => s.id) } },
+          data: {
+            customContent: null,
+            isCustom: false,
+          },
+        });
+      }
+    }
+
+    if (req.query.summaryOnly === '1') {
+      return res.json({
+        youtubeId,
+        title: scraped.title,
+        bpm: scraped.bpm,
+        updatedSongsCount,
+        droppedPreRollCount: scraped.rawDiagnostics?.droppedPreRollCount,
+        totalMeasures: scraped.compases?.length,
+        firstSixMeasures: (scraped.compases || []).slice(0, 6),
+        leadSheetStart: (scraped.leadSheetText || '').slice(0, 300),
+      });
+    }
+
+    res.json(scraped);
+  } catch (error) {
+    res.status(200).json({ error: error.message, stack: error.stack });
+  }
+});
+
+// 12. Ejecutar test de scraping / auditoría de Chordify (Modo Sandbox / Dry-Run)
+router.post('/chordify-test/scrape', async (req, res) => {
+  const {
+    youtubeId: rawInput,
+    title: fallbackTitle,
+    artist: fallbackArtist,
+    captureScreenshots = true,
+    forceScrape = true,
+  } = req.body;
+
+  if (!rawInput || !String(rawInput).trim()) {
+    return res.status(400).json({ error: 'Debes proporcionar un YouTube ID o URL válida.' });
+  }
+
+  // Extraer el YouTube ID limpio desde cualquier URL de YouTube o de Chordify
+  const inputStr = String(rawInput).trim();
+  let youtubeId = inputStr;
+  const chordifyMatch = inputStr.match(/youtube:([a-zA-Z0-9_-]{11})/);
+  const ytWatchMatch = inputStr.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  const ytShortMatch = inputStr.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+  if (chordifyMatch) {
+    youtubeId = chordifyMatch[1];
+  } else if (ytWatchMatch) {
+    youtubeId = ytWatchMatch[1];
+  } else if (ytShortMatch) {
+    youtubeId = ytShortMatch[1];
+  } else {
+    const cleanId = inputStr.match(/^([a-zA-Z0-9_-]{11})$/);
+    if (cleanId) youtubeId = cleanId[1];
+  }
+
+  try {
+    const existingSong = await prisma.song.findFirst({
+      where: { youtubeId },
+    });
+
+    // Si no se fuerza el scrape y ya existe en Song + ChordifyCache, devolver instantáneamente
+    if (!forceScrape && existingSong && existingSong.syncData) {
+      const compases = JSON.parse(existingSong.syncData);
+      const bpmMatch = (existingSong.content || '').match(/\[BPM\s*@\s*(\d+(?:\.\d+)?)\]/i);
+      const beatsMatch = (existingSong.content || '').match(/\[Beats\s*@\s*(\d+)\]/i);
+      const bpm = bpmMatch ? Number(bpmMatch[1]) : 120;
+      const barLength = beatsMatch ? Number(beatsMatch[1]) : 4;
+
+      return res.json({
+        status: 'success',
+        fromCache: true,
+        youtubeId,
+        chordifyUrl: `https://chordify.net/chords/youtube:${youtubeId}`,
+        title: existingSong.title,
+        artist: existingSong.artist,
+        bpm,
+        barLength,
+        key: 'C',
+        hasLyrics: Boolean(existingSong.content && !existingSong.isInstrumental),
+        contentText: existingSong.content,
+        compases,
+        existingSongId: existingSong.id,
+      });
+    }
+
+    const scraped = await getChordifyBeatGrid(youtubeId, fallbackTitle, fallbackArtist, {
+      captureScreenshots: Boolean(captureScreenshots),
+      includeRawData: true,
+      skipCacheSave: false, // Actualiza ChordifyCache pero NO modifica la tabla Song (Sandbox)
+    });
+
+    const bpm = scraped.bpm || 120;
+    const barLength = scraped.barLength || 4;
+    const bpmHeader = `[BPM @ ${bpm}]\n[Beats @ ${barLength}]\n\n`;
+    const bodyText = scraped.leadSheetText || formatCompasesToFallbackText(scraped.compases);
+    const contentText = bpmHeader + bodyText;
+
+    res.json({
+      status: 'success',
+      fromCache: false,
+      youtubeId,
+      chordifyUrl: scraped.chordifyUrl,
+      title: scraped.title || fallbackTitle || 'Canción de Prueba',
+      artist: scraped.artist || fallbackArtist || 'Artista',
+      bpm,
+      barLength,
+      rawKey: scraped.rawKey,
+      key: scraped.key,
+      hasLyrics: scraped.hasLyrics,
+      lyricsType: scraped.lyricsType,
+      leadSheetText: scraped.leadSheetText || null,
+      contentText,
+      compases: scraped.compases || [],
+      screenshots: scraped.screenshots || null,
+      rawDiagnostics: scraped.rawDiagnostics || null,
+      existingSongId: existingSong?.id || null,
+    });
+  } catch (error) {
+    console.error('[Dev API] Error en /chordify-test/scrape:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 13. Persistir explícitamente el resultado del test de Chordify en el catálogo oficial (Song)
+router.post('/chordify-test/save-song', async (req, res) => {
+  const { youtubeId, title, artist, contentText, compases, isInstrumental = false } = req.body;
+  if (!youtubeId || !title || !contentText) {
+    return res.status(400).json({ error: 'Faltan datos requeridos (youtubeId, title, contentText).' });
+  }
+
+  try {
+    let song = await prisma.song.findFirst({
+      where: { youtubeId },
+    });
+
+    if (!song && title && artist) {
+      song = await prisma.song.findFirst({
+        where: {
+          title: { equals: title.trim() },
+          artist: { equals: artist.trim() },
+        },
+      });
+    }
+
+    const syncDataStr = typeof compases === 'string' ? compases : JSON.stringify(compases || []);
+
+    if (song) {
+      song = await prisma.song.update({
+        where: { id: song.id },
+        data: {
+          title: title.trim(),
+          artist: (artist || 'Artista').trim(),
+          youtubeId,
+          content: contentText,
+          syncData: syncDataStr,
+          isInstrumental: Boolean(isInstrumental),
+        },
+      });
+    } else {
+      song = await prisma.song.create({
+        data: {
+          title: title.trim(),
+          artist: (artist || 'Artista').trim(),
+          youtubeId,
+          content: contentText,
+          syncData: syncDataStr,
+          isInstrumental: Boolean(isInstrumental),
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Canción "${song.title}" guardada en el catálogo oficial (Song).`,
+      song,
+    });
+  } catch (error) {
+    console.error('[Dev API] Error en /chordify-test/save-song:', error);
     res.status(500).json({ error: error.message });
   }
 });

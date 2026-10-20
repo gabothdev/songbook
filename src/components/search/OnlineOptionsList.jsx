@@ -5,7 +5,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
 import { StarIcon as StarOutlineIcon } from '@heroicons/react/24/outline';
-import { Music, Music2, Activity, Layers } from 'lucide-react';
+import { Music, Music2, Activity, Layers, AlignLeft } from 'lucide-react';
 
 // Estrellas de puntuación
 export const StarRating = ({ rating, votes }) => {
@@ -73,6 +73,12 @@ export const SongItem = ({ song, isSelected, isExpanded, onToggleExpand, onSelec
                 <span>BeatGrid</span>
               </span>
             )}
+            {(song.hasLyrics || primaryVersion?.hasLyrics) && (
+              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30 flex items-center gap-1 shadow-xs">
+                <AlignLeft className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Incluye letra</span>
+              </span>
+            )}
           </div>
           <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate group-hover:text-blue-500">{song.title}</h5>
           <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-455 truncate">{song.artist}</p>
@@ -103,6 +109,12 @@ export const SongItem = ({ song, isSelected, isExpanded, onToggleExpand, onSelec
               <div className="flex items-center gap-2">
                 {hasBeatgrid && <Activity className="w-3 h-3 text-amber-500 animate-pulse" />}
                 <span className="font-bold text-slate-700 dark:text-slate-350">{version.type || `Versión ${vIdx + 1}`}</span>
+                {version.hasLyrics && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30 flex items-center gap-1 shadow-xs">
+                    <AlignLeft className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
+                    <span>Incluye letra</span>
+                  </span>
+                )}
               </div>
               <StarRating rating={version.rating} votes={version.votes} />
             </button>

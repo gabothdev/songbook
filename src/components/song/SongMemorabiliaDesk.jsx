@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ArtistPolaroid from './ArtistPolaroid';
 import SongReleaseArtifact from './SongReleaseArtifact';
 import MemorabiliaImageModal from './MemorabiliaImageModal';
-import { autoDiscoverSongMemorabilia } from '../../services/artworkService';
 import { updateArtistImage } from '../../services/persistenceApi';
 import { useAuth } from '../../context/AuthContext';
 import { X, Camera, Disc, Ticket, Film, Radio, Lock, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -121,70 +120,29 @@ export default function SongMemorabiliaDesk({
   // Reset active artist when song changes
   useEffect(() => {
     setActiveArtistIndex(0);
+    setArtistImages({});
   }, [song.id]);
 
   // Initialize and synchronize artist images map & album cover
   useEffect(() => {
-    const map = {};
-    artists.forEach((a, idx) => {
-      map[a.id || a.name] = a.image || (idx === 0 ? (song.artistImage || null) : null);
+    setArtistImages((prev) => {
+      const map = { ...prev };
+      artists.forEach((a, idx) => {
+        const key = a.id || a.name;
+        if (a.image) {
+          map[key] = a.image;
+        } else if (!map[key]) {
+          map[key] = idx === 0 ? (song.artistImage || null) : null;
+        }
+      });
+      return map;
     });
-    setArtistImages(map);
     setAlbumCover(song.albumCover || null);
     setVersionType(song.versionType || 'studio');
     setAlbum(song.album || '');
     setReleaseYear(song.releaseYear || null);
     setVersionDetails(song.versionDetails || '');
-
-    // Auto-discover album cover if missing
-    let isMounted = true;
-    if (!song.albumCover) {
-      autoDiscoverSongMemorabilia({
-        artist: song.artist,
-        title: song.title,
-        youtubeId: song.youtubeId,
-      }).then((discovered) => {
-        if (!isMounted) return;
-        if (discovered.albumCover) {
-          setAlbumCover(discovered.albumCover);
-          if (onUpdateSongImages) {
-            onUpdateSongImages({ albumCover: discovered.albumCover });
-          }
-        }
-      });
-    }
-
-    // Auto-discover photos for any artist lacking one
-    artists.forEach((a, idx) => {
-      const currentPhoto = map[a.id || a.name];
-      if (!currentPhoto && a.name) {
-        autoDiscoverSongMemorabilia({
-          artist: a.name,
-          title: idx === 0 ? song.title : '',
-          youtubeId: idx === 0 ? song.youtubeId : '',
-        }).then((discovered) => {
-          if (!isMounted || !discovered.artistImage) return;
-          setArtistImages((prev) => ({
-            ...prev,
-            [a.id || a.name]: discovered.artistImage,
-          }));
-          const cleanId = a.id && !a.id.startsWith('parsed-') && !a.id.startsWith('artist-') && a.id !== 'default'
-            ? a.id
-            : undefined;
-          if (a.name) {
-            updateArtistImage({ id: cleanId, name: a.name, image: discovered.artistImage });
-          }
-          if (idx === 0 && onUpdateSongImages) {
-            onUpdateSongImages({ artistImage: discovered.artistImage });
-          }
-        });
-      }
-    });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [song.id, song.artist, song.title, song.youtubeId, artists, song.artistImage, song.albumCover]);
+  }, [song.id, song.artist, song.title, artists, song.artistImage, song.albumCover, song.versionType, song.album, song.releaseYear, song.versionDetails]);
 
   // Keyboard navigation for closing (Escape) and flicking Polaroids (ArrowLeft / ArrowRight)
   useEffect(() => {
@@ -271,8 +229,18 @@ export default function SongMemorabiliaDesk({
         console.warn('Error updating artist photo in DB:', err);
       }
 
+      const updatedArtists = artists.map((a, idx) => {
+        if (idx === activeArtistIndex || (target.id && a.id === target.id) || a.name === target.name) {
+          return { ...a, image: newUrl };
+        }
+        return a;
+      });
+
       if (onUpdateSongImages) {
-        onUpdateSongImages({ artistImage: newUrl });
+        onUpdateSongImages({
+          ...(activeArtistIndex === 0 ? { artistImage: newUrl } : {}),
+          artists: updatedArtists,
+        });
       }
 
       setAdminNotice(`Foto de ${target.name} guardada en su perfil`);

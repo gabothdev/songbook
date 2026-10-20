@@ -5,7 +5,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import songRoutes from './routes/songs.js';
-import persistenceRoutes from './routes/persistence.js';
+import persistenceRoutes from './routes/persistence/index.js';
 import audioRoutes from './routes/audio.js';
 import scoresRoutes from './routes/scores.js';
 import devRoutes from './routes/dev.js';

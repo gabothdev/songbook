@@ -113,10 +113,6 @@ export const CHORD_REGEX = /^[A-G][b#]?(?:m|maj|min|dim|aug|sus|add|\d|M|\/|[A-G
 export function alignChordsWithLyrics(text) {
   if (!text || typeof text !== 'string') return '';
 
-  const lines = text.split('\n');
-  const resultLines = [];
-  let pendingChordLines = [];
-
   const isChordName = (str) => {
     if (!str) return false;
     const clean = str.replace(/[\[\]]/g, '').trim();
@@ -152,6 +148,27 @@ export function alignChordsWithLyrics(text) {
     const trimmed = line.trim();
     return /^\[\s*(?:BPM|Beats|Time|TimeSignature|YouTube)\s*[@:]?\s*[^\]]+\]$/i.test(trimmed);
   };
+
+  // 1. Si el texto ya contiene acordes embebidos en las líneas de letra (formato inline de Chordify / ChordPro),
+  // no se debe aplicar la fusión de 2 líneas, preservando intactas las líneas instrumentales independientes (Intro, Solo, etc.)
+  const lines = text.split('\n');
+  let inlineLineCount = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || isSectionHeader(trimmed) || isMetadataTag(trimmed)) continue;
+    const hasChord = /\[[A-G][b#]?[^\]]*\]/.test(trimmed);
+    const withoutChords = trimmed.replace(/\[[^\]]+\]/g, '').trim();
+    const hasLyricWords = /[a-zA-ZáéíóúÁÉÍÓÚñÑ]{2,}/.test(withoutChords);
+    if (hasChord && hasLyricWords) {
+      inlineLineCount++;
+      if (inlineLineCount >= 2) {
+        return text;
+      }
+    }
+  }
+
+  const resultLines = [];
+  let pendingChordLines = [];
 
   const isChordOnlyLine = (line) => {
     const trimmed = line.trim();
@@ -322,13 +339,20 @@ export function alignChordsWithLyrics(text) {
 
     // It is a lyrics line
     if (pendingChordLines.length > 0) {
-      const allChords = [];
-      pendingChordLines.forEach((cl) => {
-        allChords.push(...extractChordsFromLine(cl));
-      });
-      pendingChordLines = [];
+      const lineAlreadyHasInlineChords = /\[[A-G][b#]?[^\]]*\]/.test(line);
+      if (lineAlreadyHasInlineChords) {
+        pendingChordLines.forEach((cl) => resultLines.push(cl));
+        pendingChordLines = [];
+        resultLines.push(line);
+      } else {
+        const allChords = [];
+        pendingChordLines.forEach((cl) => {
+          allChords.push(...extractChordsFromLine(cl));
+        });
+        pendingChordLines = [];
 
-      resultLines.push(mergeChordsIntoLyric(allChords, line));
+        resultLines.push(mergeChordsIntoLyric(allChords, line));
+      }
     } else {
       resultLines.push(line);
     }

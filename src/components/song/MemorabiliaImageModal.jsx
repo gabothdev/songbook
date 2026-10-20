@@ -16,12 +16,14 @@ import {
   RotateCcw,
   ClipboardPaste,
   Filter,
+  ChevronDown,
 } from 'lucide-react';
 import {
   searchAlbumArtworkOptions,
   searchArtistPhotoOptions,
   parseImageFraming,
   serializeImageFraming,
+  resolveArtworkUrl,
 } from '../../services/artworkService';
 import ArtistPolaroid from './ArtistPolaroid';
 import SongReleaseArtifact from './SongReleaseArtifact';
@@ -91,20 +93,28 @@ export default function MemorabiliaImageModal({
   // Available search sources
   const SOURCE_OPTIONS = useMemo(() => {
     const list = [
-      { id: 'all', label: 'Todas', icon: '🌐' },
-      { id: 'deezer', label: 'Deezer', icon: '🎵', badge: '1000px' },
-      { id: 'itunes', label: 'Apple Music', icon: '🍎' },
-      { id: 'wikipedia', label: 'Wikipedia', icon: '📖' },
+      { id: 'all', label: 'Todas las fuentes', icon: '🌐' },
+      { id: 'discogs', label: 'Discogs (Base de datos oficial)', icon: '💽', badge: 'Discogs' },
+      { id: 'deezer', label: 'Deezer (Alta resolución 1000px)', icon: '🎵', badge: '1000px' },
+      { id: 'itunes', label: 'Apple Music / iTunes', icon: '🍎' },
+      { id: 'wikipedia', label: 'Wikipedia / Wikimedia', icon: '📖' },
     ];
     if (!isArtist) {
-      list.push({ id: 'coverart', label: 'Cover Art Archive', icon: '💿' });
+      list.push({ id: 'coverart', label: 'Cover Art Archive (MusicBrainz)', icon: '💿' });
     }
     return list;
   }, [isArtist]);
 
-  // Initialize modal state on open
+  const searchTimeoutRef = useRef(null);
+  const prevIsOpenRef = useRef(false);
+  const prevTypeRef = useRef(type);
+
+  // Initialize modal state on open or type switch
   useEffect(() => {
-    if (isOpen) {
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    const isTypeSwitching = isOpen && prevTypeRef.current !== type;
+
+    if (isOpening || isTypeSwitching) {
       const framing = parseImageFraming(currentImage);
       setSelectedUrl(framing.url);
       setZoom(framing.zoom || 1);
@@ -116,14 +126,29 @@ export default function MemorabiliaImageModal({
       setReleaseYearState(releaseYear ? String(releaseYear) : '');
       setVersionDetailsState(versionDetails || '');
 
-      const defaultQuery = isArtist 
+      const defaultQuery = (isArtist 
         ? artistName 
-        : albumNameState || `${artistName} ${songTitle}`;
+        : (albumName || (artistName && songTitle ? `${artistName} ${songTitle}` : (artistName || songTitle || ''))))?.trim() || '';
+
       setSearchQuery(defaultQuery);
       setSelectedSource('all');
-      fetchSuggestions(defaultQuery, 'all');
+      if (defaultQuery) {
+        fetchSuggestions(defaultQuery, 'all');
+      } else {
+        setSuggestions([]);
+      }
     }
+
+    prevIsOpenRef.current = isOpen;
+    prevTypeRef.current = type;
   }, [isOpen, type, currentImage, artistName, songTitle, albumName, releaseYear, versionType, versionDetails]);
+
+  // Cleanup pending search timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, []);
 
   // Global Ctrl + V clipboard paste handler
   useEffect(() => {
@@ -152,11 +177,18 @@ export default function MemorabiliaImageModal({
 
       const text = e.clipboardData?.getData('text');
       if (text && (text.startsWith('http://') || text.startsWith('https://'))) {
-        setSelectedUrl(text.trim());
-        setUrlInput(text.trim());
+        const raw = text.trim();
+        setSelectedUrl(raw);
+        setUrlInput(raw);
         setZoom(1);
         setPanX(0);
         setPanY(0);
+        resolveArtworkUrl(raw).then((resolved) => {
+          if (resolved && resolved !== raw) {
+            setSelectedUrl(resolved);
+            setUrlInput(resolved);
+          }
+        });
       }
     };
 
@@ -165,25 +197,50 @@ export default function MemorabiliaImageModal({
   }, [isOpen]);
 
   const fetchSuggestions = async (query = searchQuery, source = selectedSource) => {
-    if (!query) return;
+    const trimmed = (query || '').trim();
+    if (!trimmed) {
+      setSuggestions([]);
+      return;
+    }
     setIsLoading(true);
     try {
       if (isArtist) {
-        const results = await searchArtistPhotoOptions(query, source);
+        const results = await searchArtistPhotoOptions(trimmed, source);
         setSuggestions(results);
       } else {
-        const results = await searchAlbumArtworkOptions(artistName, songTitle || query, source);
+        const results = await searchAlbumArtworkOptions(trimmed, '', source);
         setSuggestions(results);
       }
     } catch (err) {
       console.warn('[MemorabiliaImageModal] Error loading suggestions:', err);
+      setSuggestions([]);
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleSearchQueryChange = (val) => {
+    setSearchQuery(val);
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    const trimmed = (val || '').trim();
+    if (!trimmed) {
+      setSuggestions([]);
+      return;
+    }
+    if (trimmed.length >= 2) {
+      searchTimeoutRef.current = setTimeout(() => {
+        fetchSuggestions(trimmed, selectedSource);
+      }, 400);
+    }
+  };
+
   const handleSelectSource = (sourceId) => {
     setSelectedSource(sourceId);
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
     fetchSuggestions(searchQuery, sourceId);
   };
 
@@ -192,7 +249,7 @@ export default function MemorabiliaImageModal({
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('Por favor selecciona un archivo de imagen válido (JPG, PNG, WebP).');
+      alert('Por favor selecciona un archivo de imagen válido (JPG, JPEG, PNG, WebP).');
       return;
     }
 
@@ -388,42 +445,28 @@ export default function MemorabiliaImageModal({
                 {/* TAB 1: SEARCH SUGGESTIONS */}
                 {activeTab === 'search' && (
                   <>
-                    {/* Source Selector Bar */}
-                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-sans scrollbar-none">
-                      <span className="text-stone-400 flex items-center gap-1 mr-1 text-[11px] font-bold flex-shrink-0">
+                    {/* Source Selector Dropdown */}
+                    <div className="flex items-center justify-between gap-2.5 bg-stone-900/60 px-3 py-2 rounded-xl border border-stone-800">
+                      <label htmlFor="source-select" className="text-stone-300 flex items-center gap-1.5 text-xs font-bold flex-shrink-0 font-sans">
                         <Filter className="w-3.5 h-3.5 text-amber-400" />
                         <span>Fuente:</span>
-                      </span>
-                      {SOURCE_OPTIONS.map((source) => {
-                        const isActive = selectedSource === source.id;
-                        return (
-                          <button
-                            key={source.id}
-                            type="button"
-                            onClick={() => handleSelectSource(source.id)}
-                            disabled={isLoading}
-                            className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 flex-shrink-0 border ${
-                              isActive
-                                ? 'bg-amber-500 text-stone-950 border-amber-400 shadow-md scale-[1.02]'
-                                : 'bg-stone-800/80 hover:bg-stone-800 text-stone-300 border-stone-700/80 hover:border-stone-600'
-                            }`}
-                          >
-                            <span>{source.icon}</span>
-                            <span>{source.label}</span>
-                            {source.badge && (
-                              <span
-                                className={`text-[9px] px-1 py-0.2 rounded font-mono ${
-                                  isActive
-                                    ? 'bg-stone-900/30 text-stone-950 font-bold'
-                                    : 'bg-stone-700 text-amber-300'
-                                }`}
-                              >
-                                {source.badge}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
+                      </label>
+                      <div className="relative flex-1">
+                        <select
+                          id="source-select"
+                          value={selectedSource}
+                          onChange={(e) => handleSelectSource(e.target.value)}
+                          disabled={isLoading}
+                          className="w-full appearance-none bg-stone-800/90 hover:bg-stone-800 border border-stone-700/80 hover:border-amber-500/60 focus:border-amber-500 rounded-xl pl-3 pr-8 py-1.5 text-xs font-bold text-amber-300 font-sans cursor-pointer transition-colors shadow-inner focus:outline-none"
+                        >
+                          {SOURCE_OPTIONS.map((source) => (
+                            <option key={source.id} value={source.id} className="bg-stone-900 text-stone-200">
+                              {source.icon} {source.label} {source.badge ? `(${source.badge})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-amber-400 pointer-events-none" />
+                      </div>
                     </div>
 
                     {/* Search Bar */}
@@ -433,10 +476,17 @@ export default function MemorabiliaImageModal({
                         <input
                           type="text"
                           value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && fetchSuggestions(searchQuery, selectedSource)}
+                          onChange={(e) => handleSearchQueryChange(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+                              fetchSuggestions(searchQuery, selectedSource);
+                            }
+                          }}
                           placeholder={
-                            selectedSource === 'deezer'
+                            selectedSource === 'discogs'
+                              ? 'Buscar en Discogs (vinilos, CDs, ediciones originales)...'
+                              : selectedSource === 'deezer'
                               ? 'Buscar en Deezer (alta resolución 1000px)...'
                               : selectedSource === 'itunes'
                               ? 'Buscar en Apple Music / iTunes...'
@@ -445,15 +495,28 @@ export default function MemorabiliaImageModal({
                               : selectedSource === 'coverart'
                               ? 'Buscar en Cover Art Archive (MusicBrainz)...'
                               : isArtist
-                              ? 'Buscar artista en Deezer, Wikipedia, Apple...'
-                              : 'Buscar álbum en Deezer, Apple, Cover Art...'
+                              ? 'Buscar artista en Discogs, Deezer, Wikipedia, Apple...'
+                              : 'Buscar álbum en Discogs, Deezer, Apple, Cover Art...'
                           }
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-9 pr-3 py-2 text-xs text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 font-sans"
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-9 pr-9 py-2 text-xs text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 font-sans"
                         />
+                        {searchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => handleSearchQueryChange('')}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-200 p-1 cursor-pointer transition-colors"
+                            title="Limpiar búsqueda"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                       <button
                         type="button"
-                        onClick={() => fetchSuggestions(searchQuery, selectedSource)}
+                        onClick={() => {
+                          if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+                          fetchSuggestions(searchQuery, selectedSource);
+                        }}
                         disabled={isLoading}
                         className="px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold font-sans cursor-pointer transition-colors flex items-center gap-1.5 flex-shrink-0"
                       >
@@ -468,7 +531,7 @@ export default function MemorabiliaImageModal({
                         <RefreshCw className="w-6 h-6 animate-spin text-amber-500" />
                         <span>
                           {selectedSource === 'all'
-                            ? 'Consultando Deezer, iTunes, Cover Art y Wikipedia...'
+                            ? 'Consultando Discogs, Deezer, iTunes, Cover Art y Wikipedia...'
                             : `Buscando imágenes en ${SOURCE_OPTIONS.find((s) => s.id === selectedSource)?.label || selectedSource}...`}
                         </span>
                       </div>
@@ -492,6 +555,7 @@ export default function MemorabiliaImageModal({
                               <img
                                 src={item.url}
                                 alt={item.label || ''}
+                                referrerPolicy="no-referrer"
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                                 loading="lazy"
                               />
@@ -547,21 +611,29 @@ export default function MemorabiliaImageModal({
                 {activeTab === 'url' && (
                   <div className="space-y-3">
                     <label className="block text-xs font-bold text-stone-300 font-sans">
-                      Enlace directo a la imagen (JPG, PNG, WebP):
+                      Enlace directo a la imagen (JPG, JPEG, PNG, WebP) o enlace de Discogs:
                     </label>
                     <input
                       type="text"
                       value={urlInput}
                       onChange={(e) => {
-                        setUrlInput(e.target.value);
-                        setSelectedUrl(e.target.value);
-                        handleResetFraming();
+                        const val = e.target.value;
+                        setUrlInput(val);
+                        const trimmed = val.trim();
+                        if (trimmed) {
+                          resolveArtworkUrl(trimmed).then((resolved) => {
+                            setSelectedUrl(resolved || trimmed);
+                            handleResetFraming();
+                          });
+                        } else {
+                          setSelectedUrl(null);
+                        }
                       }}
-                      placeholder="https://ejemplo.com/foto.jpg"
+                      placeholder="https://ejemplo.com/tapa.jpeg o https://i.discogs.com/...jpeg"
                       className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3.5 py-2.5 text-xs text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 font-sans"
                     />
                     <p className="text-[11px] text-stone-400 font-sans">
-                      💡 <em>Tip: También puedes copiar cualquier foto de la web y presionar <kbd className="bg-stone-800 px-1 rounded text-stone-200">Ctrl+V</kbd> en este modal.</em>
+                      💡 <em>Tip: Puedes pegar URLs de imágenes en formato JPEG, JPG, PNG o WebP, o copiar una foto de la web y presionar <kbd className="bg-stone-800 px-1 rounded text-stone-200">Ctrl+V</kbd>.</em>
                     </p>
                   </div>
                 )}
@@ -578,11 +650,11 @@ export default function MemorabiliaImageModal({
                         Arrastra o haz clic para subir
                       </p>
                       <p className="text-[11px] text-stone-500 font-sans mb-3">
-                        PNG, JPG o WebP
+                        JPG, JPEG, PNG o WebP
                       </p>
                       <input
                         type="file"
-                        accept="image/*"
+                        accept="image/*,.jpg,.jpeg,.png,.webp"
                         onChange={handleFileUpload}
                         className="block w-full text-xs text-stone-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-600 file:text-white hover:file:bg-amber-500 file:cursor-pointer cursor-pointer"
                       />

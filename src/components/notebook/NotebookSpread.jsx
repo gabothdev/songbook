@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SpiralRings from './SpiralRings';
 import NotebookCover from './NotebookCover';
@@ -13,8 +13,17 @@ import FavoritesLibraryPanel from './FavoritesLibraryPanel';
 import SongSheetView from '../song/SongSheetView';
 import SongSearchRebuild from '../search/SongSearchRebuild';
 import ScoresIndexPanel from '../scores/ScoresIndexPanel';
-import ScoreStandView from '../scores/ScoreStandView';
-import ScoreDigitizerStudio from '../scores/ScoreDigitizerStudio';
+
+const ScoreStandView = React.lazy(() => import('../scores/ScoreStandView'));
+const ScoreDigitizerStudio = React.lazy(() => import('../scores/ScoreDigitizerStudio'));
+
+function MinimalScoreSpinner() {
+  return (
+    <div className="w-full flex-1 flex items-center justify-center min-h-[400px]">
+      <div className="w-8 h-8 border-2 border-amber-600/20 border-t-amber-600 rounded-full animate-spin" />
+    </div>
+  );
+}
 import { scoresApi } from '../../services/scoresApi';
 import { SAMPLE_SONGS_DATA } from '../../data/sampleSongs';
 import useSetlistManager from '../../hooks/useSetlistManager';
@@ -41,7 +50,7 @@ export default function NotebookSpread({ onNavigateDev }) {
   const { t } = useLanguage();
   const { currentUser, login, logout, toggleTier, openUpgradeModal, isPro, isAdmin } = useAuth();
 
-  const [activeAuthTab, setActiveAuthTab] = useState('login');
+  const [activeAuthTab, setActiveAuthTab] = useState('guest');
   const [selectedSong, setSelectedSong] = useState(null);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [isPageFlipping, setIsPageFlipping] = useState(false);
@@ -149,12 +158,14 @@ export default function NotebookSpread({ onNavigateDev }) {
   // Setlist, Favorites & Catalog Manager Hook
   const {
     userSongs,
+    setUserSongs,
     setlists,
     activeSetlist,
     setActiveSetlist,
     setStageModeSetlist,
     setlistContext,
     handleToggleFavorite,
+    handleToggleSaveSong,
     handleCreateSetlist,
     handleDeleteSetlist,
     handleAddSongToSetlist,
@@ -163,11 +174,53 @@ export default function NotebookSpread({ onNavigateDev }) {
     handlePlaySongFromSetlistPanel,
     handleImportScrapedSong,
   } = useSetlistManager({
+    currentUser,
     onSelectSong: (song) => handleOpenSongItem(song),
     onUpdateSelectedSong: (updaterFn) => setSelectedSong(updaterFn),
   });
 
-  const triggerPageFlip = (direction, callback) => {
+  const handleUpdateCurrentSong = useCallback(
+    (updatedFields) => {
+      setSelectedSong((prev) => (prev ? { ...prev, ...updatedFields } : prev));
+      setUserSongs((prev) =>
+        prev.map((s) => {
+          const isMatch =
+            (selectedSong?.id && String(s.id) === String(selectedSong.id)) ||
+            (s.title === selectedSong?.title && s.artist === selectedSong?.artist);
+          return isMatch ? { ...s, ...updatedFields } : s;
+        })
+      );
+      if (selectedSong?.id) {
+        SAMPLE_SONGS_DATA[String(selectedSong.id)] = {
+          ...(SAMPLE_SONGS_DATA[String(selectedSong.id)] || {}),
+          ...updatedFields,
+        };
+      }
+    },
+    [selectedSong, setUserSongs]
+  );
+
+  const [activeLibraryFilter, setActiveLibraryFilter] = useState('all'); // 'all' | 'favorites' | 'setlist'
+
+  const handleSelectFilter = (filterType) => {
+    setActiveLibraryFilter(filterType);
+    setActiveSetlist(null);
+  };
+
+  const handleSelectSetlist = (setlist) => {
+    setActiveSetlist(setlist);
+    setActiveLibraryFilter('setlist');
+  };
+
+  const handleDeleteSetlistWithReset = (setlistName) => {
+    handleDeleteSetlist(setlistName);
+    if (activeSetlist?.name === setlistName) {
+      setActiveSetlist(null);
+      setActiveLibraryFilter('all');
+    }
+  };
+
+  const triggerPageFlip = useCallback((direction, callback) => {
     setFlipDirection(direction);
     setIsPageFlipping(true);
     setTimeout(() => {
@@ -176,6 +229,61 @@ export default function NotebookSpread({ onNavigateDev }) {
     setTimeout(() => {
       setIsPageFlipping(false);
     }, 900);
+  }, []);
+
+  // Centralized notebook navigation controller
+  const navigateNotebook = useCallback(
+    ({
+      direction = 'backward',
+      targetAuthTab = null,
+      targetSection = null,
+      closeContent = true,
+      beforeFlip = null,
+      onComplete = null,
+    } = {}) => {
+      if (isPageFlipping) return;
+
+      if (beforeFlip) beforeFlip();
+
+      if (targetAuthTab) {
+        setActiveAuthTab(targetAuthTab);
+      }
+
+      const performNavigation = () => {
+        if (closeContent) {
+          setSelectedSong(null);
+          setActiveScoreData(null);
+          setIsLoadingScore(false);
+          setStageModeSetlist(null);
+        }
+        if (targetSection) {
+          setNotebookSection(targetSection);
+        }
+        if (onComplete) {
+          onComplete();
+        }
+      };
+
+      const hasActiveContent = Boolean(selectedSong || activeScoreData || isLoadingScore);
+      if (hasActiveContent || direction === 'forward') {
+        triggerPageFlip(direction, performNavigation);
+      } else {
+        performNavigation();
+      }
+    },
+    [isPageFlipping, selectedSong, activeScoreData, isLoadingScore, setStageModeSetlist, triggerPageFlip]
+  );
+
+  const handleNavigateAuth = (targetTab = 'register') => {
+    navigateNotebook({ direction: 'backward', targetAuthTab: targetTab });
+  };
+
+  const handleAuthTabChange = (targetTab) => {
+    navigateNotebook({ direction: 'backward', targetAuthTab: targetTab });
+  };
+
+  const handleMusicianTabChange = (targetTab) => {
+    navigateNotebook({ direction: 'backward', targetSection: targetTab });
   };
 
   const handleLoginSubmit = (data) => {
@@ -183,10 +291,14 @@ export default function NotebookSpread({ onNavigateDev }) {
   };
 
   const handleLogoutClick = () => {
-    setSelectedSong(null);
-    setActiveSetlist(null);
-    setStageModeSetlist(null);
-    triggerPageFlip('backward', () => logout());
+    navigateNotebook({
+      direction: 'backward',
+      beforeFlip: () => {
+        setActiveSetlist(null);
+        setActiveLibraryFilter('all');
+      },
+      onComplete: () => logout(),
+    });
   };
 
   const handleOpenSongItem = (songItem) => {
@@ -223,8 +335,7 @@ export default function NotebookSpread({ onNavigateDev }) {
   };
 
   const handleBackToLibrary = () => {
-    setStageModeSetlist(null);
-    triggerPageFlip('backward', () => setSelectedSong(null));
+    navigateNotebook({ direction: 'backward' });
   };
 
   const onPlaySetlistDirect = (sl) => {
@@ -332,14 +443,11 @@ export default function NotebookSpread({ onNavigateDev }) {
         >
           {/* Index Tabs */}
           {!currentUser ? (
-            <NotebookTabs activeTab={activeAuthTab} onTabChange={setActiveAuthTab} mode="auth" />
+            <NotebookTabs activeTab={activeAuthTab} onTabChange={handleAuthTabChange} mode="auth" />
           ) : (
             <NotebookTabs
               activeTab={notebookSection}
-              onTabChange={(tab) => {
-                setSelectedSong(null);
-                setNotebookSection(tab);
-              }}
+              onTabChange={handleMusicianTabChange}
               mode="musician"
             />
           )}
@@ -352,6 +460,7 @@ export default function NotebookSpread({ onNavigateDev }) {
             <SongSheetView
               song={selectedSong}
               onBack={handleBackToLibrary}
+              onNavigateAuth={handleNavigateAuth}
               setlistContext={setlistContext}
               isFavorite={
                 selectedSong
@@ -363,29 +472,42 @@ export default function NotebookSpread({ onNavigateDev }) {
                   : false
               }
               onToggleFavorite={handleToggleFavorite}
+              isSaved={
+                selectedSong
+                  ? !!userSongs.find(
+                      (s) =>
+                        String(s.id) === String(selectedSong.id) ||
+                        (s.title === selectedSong.title && s.artist === selectedSong.artist)
+                    )?.isSaved
+                  : false
+              }
+              onToggleSaveSong={handleToggleSaveSong}
               setlists={setlists}
               onAddSongToSetlist={handleAddSongToSetlist}
+              onUpdateSong={handleUpdateCurrentSong}
             />
           ) : (activeScoreData || isLoadingScore) ? (
             /* HOJA BLANCA QUE OCUPA TODO EL ANCHO DEL CUADERNO (ATRIL / IMPRESIÓN) */
-            <ScoreStandView
-              scoreData={activeScoreData}
-              isLoading={isLoadingScore}
-              onBack={() => {
-                setActiveScoreData(null);
-                setIsLoadingScore(false);
-              }}
-              onSaveToLibrary={handleSaveActiveScore}
-              isSaved={savedScores.some(s => s.songsterrId === activeScoreData?.songId || s.id === activeScoreData?.id)}
-              onSwitchPart={handleSwitchScorePart}
-              setlists={setlists}
-              onAddSongToSetlist={handleAddSongToSetlist}
-              setlistContext={setlistContext}
-            />
+            <React.Suspense fallback={<MinimalScoreSpinner />}>
+              <ScoreStandView
+                scoreData={activeScoreData}
+                isLoading={isLoadingScore}
+                onBack={() => {
+                  setActiveScoreData(null);
+                  setIsLoadingScore(false);
+                }}
+                onSaveToLibrary={handleSaveActiveScore}
+                isSaved={savedScores.some(s => s.songsterrId === activeScoreData?.songId || s.id === activeScoreData?.id)}
+                onSwitchPart={handleSwitchScorePart}
+                setlists={setlists}
+                onAddSongToSetlist={handleAddSongToSetlist}
+                setlistContext={setlistContext}
+              />
+            </React.Suspense>
           ) : (
             <>
               {/* ================= LEFT STATIONARY BASE PAGE ================= */}
-              <div className="hidden md:flex flex-col justify-between flex-1 bg-[#fcf9f2] rounded-l-2xl shadow-[inset_-10px_0_15px_rgba(0,0,0,0.06)] border-y border-l border-stone-300 overflow-hidden paper-texture p-7 lg:p-9 min-h-[580px] xl:min-h-[640px] 2xl:min-h-[690px] relative z-10">
+              <div className="hidden md:flex flex-col justify-between flex-1 bg-[#fcf9f2] rounded-l-2xl shadow-[inset_-10px_0_15px_rgba(0,0,0,0.06)] border-y border-l border-stone-300 overflow-hidden paper-texture p-7 lg:p-9 h-[580px] xl:h-[640px] 2xl:h-[700px] min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] max-h-[580px] xl:max-h-[640px] 2xl:max-h-[700px] relative z-10">
                 <div className="absolute top-0 right-0 bottom-0 w-10 bg-gradient-to-l from-stone-900/10 to-transparent pointer-events-none z-10" />
 
                 {!currentUser ? (
@@ -404,15 +526,14 @@ export default function NotebookSpread({ onNavigateDev }) {
                   /* Interactive Setlists Panel when logged in */
                   <SetlistsPanel
                     currentUser={currentUser}
+                    userSongs={userSongs}
                     setlists={setlists}
+                    activeLibraryFilter={activeLibraryFilter}
                     activeSetlist={activeSetlist}
-                    onSelectSetlist={setActiveSetlist}
-                    onBackToSetlists={() => setActiveSetlist(null)}
+                    onSelectFilter={handleSelectFilter}
+                    onSelectSetlist={handleSelectSetlist}
                     onCreateSetlist={handleCreateSetlist}
-                    onDeleteSetlist={handleDeleteSetlist}
-                    onRemoveSongFromSetlist={handleRemoveSongFromSetlist}
-                    onPlaySong={onPlaySongFromPanel}
-                    onPlaySetlist={onPlaySetlistDirect}
+                    onDeleteSetlist={handleDeleteSetlistWithReset}
                     isPro={isPro}
                     onOpenUpgradeModal={openUpgradeModal}
                     onOpenSearchModal={() => setIsSearchModalOpen(true)}
@@ -426,7 +547,7 @@ export default function NotebookSpread({ onNavigateDev }) {
               </div>
 
               {/* ================= RIGHT STATIONARY BASE PAGE ================= */}
-              <div className="flex-1 bg-[#fcf9f2] rounded-2xl md:rounded-l-none md:rounded-r-2xl shadow-[inset_10px_0_15px_rgba(0,0,0,0.06)] border border-stone-300 overflow-hidden paper-texture p-7 lg:p-9 min-h-[580px] xl:min-h-[640px] 2xl:min-h-[690px] flex flex-col justify-between relative z-10">
+              <div className="flex-1 bg-[#fcf9f2] rounded-2xl md:rounded-l-none md:rounded-r-2xl shadow-[inset_10px_0_15px_rgba(0,0,0,0.06)] border border-stone-300 overflow-hidden paper-texture p-7 lg:p-9 h-[580px] xl:h-[640px] 2xl:h-[700px] min-h-[580px] xl:min-h-[640px] 2xl:min-h-[700px] max-h-[580px] xl:max-h-[640px] 2xl:max-h-[700px] flex flex-col justify-between relative z-10">
                 <div className="absolute top-0 left-0 bottom-0 w-10 bg-gradient-to-r from-stone-900/10 to-transparent pointer-events-none z-10" />
 
                 {!currentUser ? (
@@ -446,8 +567,10 @@ export default function NotebookSpread({ onNavigateDev }) {
                     )}
                     {activeAuthTab === 'guest' && (
                       <GuestPrompt
-                        onEnterGuest={() => handleLoginSubmit({ guest: true, name: 'Invitado' })}
+                        songs={userSongs}
+                        onSelectSong={handleOpenSongItem}
                         onSwitchToLogin={() => setActiveAuthTab('login')}
+                        onSwitchToRegister={() => setActiveAuthTab('register')}
                       />
                     )}
                   </>
@@ -455,14 +578,19 @@ export default function NotebookSpread({ onNavigateDev }) {
                   /* Favorites, Songs & Scores Library when logged in */
                   <FavoritesLibraryPanel
                     userSongs={userSongs}
+                    setlists={setlists}
+                    activeLibraryFilter={activeLibraryFilter}
+                    activeSetlist={activeSetlist}
                     onOpenSong={handleOpenSongItem}
                     onToggleFavorite={handleToggleFavorite}
-                    activeSetlist={activeSetlist}
+                    onToggleSaveSong={handleToggleSaveSong}
                     onAddSongToSetlist={handleAddSongToSetlist}
+                    onRemoveSongFromSetlist={handleRemoveSongFromSetlist}
+                    onDeleteSetlist={handleDeleteSetlistWithReset}
+                    onPlaySetlist={onPlaySetlistDirect}
                     onOpenSearchModal={() => setIsSearchModalOpen(true)}
+                    onBackToAll={() => handleSelectFilter('all')}
                     isPro={isPro}
-                    onSelectScore={handleSelectScore}
-                    savedScores={savedScores}
                   />
                 )}
               </div>

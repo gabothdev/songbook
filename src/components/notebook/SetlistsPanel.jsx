@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ListMusic,
   Plus,
-  ArrowLeft,
   Play,
   Trash2,
   Music,
@@ -13,27 +12,29 @@ import {
   Sparkles,
   ChevronRight,
   Folder,
-  Disc3
+  Disc3,
+  Bookmark,
+  Star,
+  Check
 } from 'lucide-react';
 
 export default function SetlistsPanel({
   currentUser,
+  userSongs = [],
   setlists = [],
+  activeLibraryFilter = 'all', // 'all' | 'favorites' | 'setlist'
   activeSetlist = null,
-  onSelectSetlist,
-  onBackToSetlists,
+  onSelectFilter, // (filterType: 'all' | 'favorites') => void
+  onSelectSetlist, // (setlist) => void
   onCreateSetlist,
   onDeleteSetlist,
-  onRemoveSongFromSetlist,
-  onPlaySong,
-  onPlaySetlist,
   isPro = false,
   onOpenUpgradeModal,
   onOpenSearchModal,
 }) {
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [newSetlistName, setNewSetlistName] = useState('');
-  const [confirmDeleteSetlist, setConfirmDeleteSetlist] = useState(false);
+  const [deletingSetlistName, setDeletingSetlistName] = useState(null);
 
   const handleCreateSubmit = (e) => {
     e.preventDefault();
@@ -43,330 +44,294 @@ export default function SetlistsPanel({
     setIsCreatingNew(false);
   };
 
+  const savedCount = userSongs.filter((s) => s.isSaved !== false).length;
+  const favoritesCount = userSongs.filter((s) => s.isFavorite).length;
+
   return (
     <div className="h-full flex flex-col justify-between select-none">
-      {/* ================= TOP SECTION ================= */}
-      <div>
+      {/* ================= TOP / MAIN NAVIGATION SECTION ================= */}
+      <div className="flex-1 min-h-0 flex flex-col">
         {/* User Mini Profile Header */}
-        <div className="flex items-center gap-3.5 mb-5 bg-white/75 p-3.5 rounded-2xl border border-stone-200 shadow-sm">
-          <div className="w-12 h-12 rounded-xl bg-stone-900 text-amber-200 flex items-center justify-center font-serif text-xl font-bold shadow-md flex-shrink-0">
+        <div className="flex-shrink-0 flex items-center gap-3.5 mb-4 bg-white/75 p-3 rounded-2xl border border-stone-200/90 shadow-2xs">
+          <div className="w-11 h-11 rounded-xl bg-stone-900 text-amber-200 flex items-center justify-center font-serif text-lg font-bold shadow-xs flex-shrink-0">
             {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'M'}
           </div>
-          <div className="min-w-0">
-            <h2 className="text-lg sm:text-xl font-serif font-bold text-stone-900 tracking-tight truncate">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base sm:text-lg font-serif font-bold text-stone-900 tracking-tight truncate">
               {currentUser?.name || 'Músico'}
             </h2>
-            <p className="text-xs font-sans text-stone-500 flex items-center gap-1.5 mt-0.5 truncate">
-              <Guitar className="w-3.5 h-3.5 text-amber-700 flex-shrink-0" />
+            <p className="text-[11px] font-sans text-stone-500 flex items-center gap-1.5 mt-0.5 truncate">
+              <Guitar className="w-3 h-3 text-amber-700 flex-shrink-0" />
               <span className="truncate">{currentUser?.instrument || 'Guitarra'}</span>
             </p>
           </div>
         </div>
 
-        {/* Setlist Navigation Switcher (List vs Detail) */}
-        <AnimatePresence mode="wait">
-          {!activeSetlist ? (
-            /* ================= VIEW 1: SETLISTS OVERVIEW ================= */
-            <motion.div
-              key="setlists-list"
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -10 }}
-              transition={{ duration: 0.2 }}
-              className="space-y-3"
+        {/* ================= FILTROS PRINCIPALES DE BIBLIOTECA ================= */}
+        <div className="flex-shrink-0 space-y-1.5 mb-3.5">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500 font-sans block px-1">
+            Explorar Repertorio
+          </span>
+
+          <div className="grid grid-cols-2 gap-2">
+            {/* Botón: Mis Guardadas */}
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.015 }}
+              whileTap={{ scale: 0.985 }}
+              onClick={() => onSelectFilter && onSelectFilter('all')}
+              className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                activeLibraryFilter === 'all'
+                  ? 'bg-amber-100/90 border-amber-300 text-amber-950 font-bold shadow-xs ring-1 ring-amber-300/60'
+                  : 'bg-white/80 hover:bg-white border-stone-200/90 text-stone-700 hover:border-amber-200 shadow-2xs'
+              }`}
             >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-stone-600 font-sans flex items-center gap-1.5">
-                  <ListMusic className="w-4 h-4 text-amber-700" />
-                  Mis Setlists & Repertorios ({setlists.length})
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsCreatingNew(!isCreatingNew)}
-                  className="text-xs font-sans text-amber-800 hover:text-amber-950 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+              <div className="flex items-center gap-2 min-w-0">
+                <div
+                  className={`p-1.5 rounded-lg flex-shrink-0 ${
+                    activeLibraryFilter === 'all'
+                      ? 'bg-amber-700 text-amber-100'
+                      : 'bg-amber-100/80 text-amber-800'
+                  }`}
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>{isCreatingNew ? 'Cancelar' : 'Nueva Lista'}</span>
-                </button>
-              </div>
-
-              {/* In-line New Setlist Input */}
-              {isCreatingNew && (
-                <motion.form
-                  initial={{ opacity: 0, y: -6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  onSubmit={handleCreateSubmit}
-                  className="p-3 bg-amber-50/90 border border-amber-300 rounded-xl space-y-2 shadow-sm"
-                >
-                  <label className="text-[11px] font-sans font-bold text-stone-700 block">
-                    Nombre del Repertorio o Show:
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      autoFocus
-                      value={newSetlistName}
-                      onChange={(e) => setNewSetlistName(e.target.value)}
-                      placeholder="Ej: Acústico de Viernes..."
-                      className="flex-1 px-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg outline-none focus:ring-2 focus:ring-amber-500/20 font-sans text-stone-900"
-                    />
-                    <button
-                      type="submit"
-                      className="px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-bold font-sans cursor-pointer transition-colors"
-                    >
-                      Guardar
-                    </button>
-                  </div>
-                </motion.form>
-              )}
-
-              {/* Setlists Cards Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[260px] xl:max-h-[300px] overflow-y-auto pr-1">
-                {setlists.map((setlist) => {
-                  const songCount = setlist.songs ? setlist.songs.length : (setlist.count || 0);
-                  return (
-                    <motion.div
-                      key={setlist.name}
-                      whileHover={{ scale: 1.015, y: -1 }}
-                      whileTap={{ scale: 0.985 }}
-                      onClick={() => onSelectSetlist(setlist)}
-                      className="p-3 bg-white/85 hover:bg-white rounded-xl border border-stone-200/90 hover:border-amber-300 shadow-sm hover:shadow-md flex items-center justify-between transition-all cursor-pointer group"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="p-2 rounded-lg bg-amber-100/70 text-amber-800 group-hover:bg-stone-900 group-hover:text-amber-300 transition-colors flex-shrink-0">
-                          <Folder className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <h4 className="text-xs font-sans font-bold text-stone-800 group-hover:text-amber-900 transition-colors truncate">
-                            {setlist.name}
-                          </h4>
-                          <span className="text-[11px] font-mono text-stone-400 font-medium">
-                            {songCount} {songCount === 1 ? 'tema' : 'temas'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <ChevronRight className="w-4 h-4 text-stone-300 group-hover:text-amber-700 transition-colors flex-shrink-0" />
-                    </motion.div>
-                  );
-                })}
-
-                {setlists.length === 0 && !isCreatingNew && (
-                  <div className="col-span-full py-8 text-center bg-white/50 rounded-xl border border-dashed border-stone-300 text-stone-500 font-sans text-xs">
-                    <Disc3 className="w-8 h-8 mx-auto mb-2 text-stone-400 opacity-60" />
-                    <p className="font-semibold">No tienes setlists creados aún</p>
-                    <p className="text-[11px] text-stone-400 mt-0.5">Crea uno para armar tu repertorio en vivo.</p>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          ) : (
-            /* ================= VIEW 2: SELECTED SETLIST CONTENT ================= */
-            <motion.div
-              key="setlist-detail"
-              initial={{ opacity: 0, x: 10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 10 }}
-              transition={{ duration: 0.2 }}
-              className="space-y-3"
-            >
-              {/* Breadcrumb & Setlist Header */}
-              <div className="flex items-center justify-between pb-2 border-b border-stone-200">
-                <button
-                  type="button"
-                  onClick={onBackToSetlists}
-                  className="flex items-center gap-1.5 px-2.5 py-1 bg-white hover:bg-stone-50 text-stone-700 hover:text-stone-900 rounded-lg border border-stone-300 text-xs font-bold font-sans shadow-sm transition-all cursor-pointer"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Todos los Setlists</span>
-                </button>
-
-                {/* Delete button → opens inline confirm */}
-                <AnimatePresence mode="wait">
-                  {confirmDeleteSetlist ? (
-                    <motion.div
-                      key="confirm"
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      className="flex items-center gap-1.5 bg-red-50 border border-red-300 rounded-lg px-2 py-1"
-                    >
-                      <span className="text-[11px] font-sans font-bold text-red-800">¿Eliminar?</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onDeleteSetlist(activeSetlist.name);
-                          setConfirmDeleteSetlist(false);
-                        }}
-                        className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[11px] font-bold font-sans cursor-pointer transition-colors"
-                      >
-                        Sí
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteSetlist(false)}
-                        className="px-2 py-0.5 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded text-[11px] font-bold font-sans cursor-pointer transition-colors"
-                      >
-                        No
-                      </button>
-                    </motion.div>
-                  ) : (
-                    <motion.button
-                      key="trash"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      type="button"
-                      onClick={() => setConfirmDeleteSetlist(true)}
-                      className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                      title="Eliminar este setlist"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </motion.button>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-serif font-black text-stone-900 tracking-tight flex items-center gap-2">
-                    <ListMusic className="w-4 h-4 text-amber-700" />
-                    <span>{activeSetlist.name}</span>
-                  </h3>
-                  <p className="text-[11px] font-sans text-stone-500">
-                    {activeSetlist.songs?.length || 0} canciones en orden de ejecución
-                  </p>
+                  <Bookmark className="w-3.5 h-3.5 fill-current" />
                 </div>
-
-                {activeSetlist.songs && activeSetlist.songs.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => onPlaySetlist(activeSetlist)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-900 hover:bg-black text-amber-200 rounded-xl font-sans font-bold text-xs shadow-sm transition-all cursor-pointer"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>Tocar Set</span>
-                  </button>
-                )}
+                <div className="min-w-0">
+                  <span className="text-xs font-sans font-bold block truncate">
+                    Mis Guardadas
+                  </span>
+                  <span className="text-[10px] font-sans text-stone-500">
+                    Todo mi catálogo
+                  </span>
+                </div>
               </div>
+              <span
+                className={`text-[11px] font-mono px-2 py-0.5 rounded-full font-bold ml-1.5 flex-shrink-0 ${
+                  activeLibraryFilter === 'all'
+                    ? 'bg-amber-200/80 text-amber-950'
+                    : 'bg-stone-100 text-stone-600'
+                }`}
+              >
+                {savedCount}
+              </span>
+            </motion.button>
 
-              {/* Setlist Songs Ordered List */}
-              <div className="space-y-1.5 max-h-[250px] xl:max-h-[290px] overflow-y-auto pr-1">
-                {activeSetlist.songs && activeSetlist.songs.length > 0 ? (
-                  activeSetlist.songs.map((song, sIdx) => {
-                    const isScoreItem = Boolean(
-                      song.isScore ||
-                      song.type === 'score' ||
-                      song.type === 'tango_archive' ||
-                      song.songsterrId ||
-                      song.tangoId ||
-                      (typeof song.content === 'string' && song.content.startsWith('[SCORE_SHEET]'))
-                    );
-                    const isTangoItem = song.type === 'tango_archive' || Boolean(song.tangoId) || (typeof song.content === 'string' && song.content.includes('"tango_archive"'));
-
-                    return (
-                      <div
-                        key={song.id || sIdx}
-                        className="p-2.5 bg-white/90 rounded-xl border border-stone-200 shadow-sm flex items-center justify-between hover:bg-white hover:border-amber-200 transition-all group"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="font-mono text-xs font-bold text-stone-400 w-4 text-center">
-                            {sIdx + 1}
-                          </span>
-
-                          {isTangoItem ? (
-                            <div className="px-1.5 py-1 rounded-lg bg-rose-100 text-rose-900 border border-rose-300 font-sans text-[10px] font-black flex items-center gap-1 flex-shrink-0 shadow-2xs" title="Partitura de Archivo Histórico de Tango">
-                              <span>🎻</span>
-                              <span>TANGO</span>
-                            </div>
-                          ) : isScoreItem ? (
-                            <div className="px-1.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-300 font-sans text-[10px] font-black flex items-center gap-1 flex-shrink-0 shadow-2xs" title="Tablatura / Partitura Interactiva">
-                              <span>🎸</span>
-                              <span>TAB</span>
-                            </div>
-                          ) : (
-                            <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-900 flex items-center justify-center font-mono text-[11px] font-bold border border-amber-300 flex-shrink-0" title={`Tono: ${song.key || 'C'}`}>
-                              {song.key || 'C'}
-                            </div>
-                          )}
-
-                          <div className="min-w-0">
-                            <h4 className="font-serif font-bold text-xs text-stone-900 truncate">
-                              {song.title}
-                            </h4>
-                            <p className="text-[10px] font-sans text-stone-500 truncate">
-                              {(Array.isArray(song.artists) && song.artists.length > 0
-                                ? song.artists.map((a) => a.name).join(', ')
-                                : (song.artist || song.composer))} {isTangoItem ? '• Partitura Tango' : isScoreItem ? '• Tablatura / Partitura' : ''}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => onPlaySong(song)}
-                            className="p-1.5 bg-stone-100 hover:bg-stone-900 text-stone-600 hover:text-amber-300 rounded-lg transition-colors cursor-pointer"
-                            title={isScoreItem ? "Abrir partitura en el atril" : "Abrir letra y acordes"}
-                          >
-                            <Play className="w-3 h-3 fill-current" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onRemoveSongFromSetlist(activeSetlist.name, song.id)}
-                            className="p-1.5 text-stone-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                            title="Quitar del setlist"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="py-6 px-4 text-center bg-amber-50/60 rounded-xl border border-dashed border-amber-300 text-stone-600 font-sans text-xs">
-                    <p className="font-semibold text-stone-800">Setlist sin canciones</p>
-                    <p className="text-[11px] text-stone-500 mt-1">
-                      Haz clic en el botón <strong className="text-amber-800">+</strong> en las canciones favoritas de la página derecha para sumarlas a esta lista.
-                    </p>
-                  </div>
-                )}
+            {/* Botón: Mis Favoritas */}
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.015 }}
+              whileTap={{ scale: 0.985 }}
+              onClick={() => onSelectFilter && onSelectFilter('favorites')}
+              className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                activeLibraryFilter === 'favorites'
+                  ? 'bg-amber-100/90 border-amber-300 text-amber-950 font-bold shadow-xs ring-1 ring-amber-300/60'
+                  : 'bg-white/80 hover:bg-white border-stone-200/90 text-stone-700 hover:border-amber-200 shadow-2xs'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div
+                  className={`p-1.5 rounded-lg flex-shrink-0 ${
+                    activeLibraryFilter === 'favorites'
+                      ? 'bg-amber-600 text-white'
+                      : 'bg-amber-100/80 text-amber-800'
+                  }`}
+                >
+                  <Star className="w-3.5 h-3.5 fill-current" />
+                </div>
+                <div className="min-w-0">
+                  <span className="text-xs font-sans font-bold block truncate">
+                    Mis Favoritas
+                  </span>
+                  <span className="text-[10px] font-sans text-stone-500">
+                    Canciones clave
+                  </span>
+                </div>
               </div>
-            </motion.div>
+              <span
+                className={`text-[11px] font-mono px-2 py-0.5 rounded-full font-bold ml-1.5 flex-shrink-0 ${
+                  activeLibraryFilter === 'favorites'
+                    ? 'bg-amber-200/80 text-amber-950'
+                    : 'bg-stone-100 text-stone-600'
+                }`}
+              >
+                {favoritesCount}
+              </span>
+            </motion.button>
+          </div>
+        </div>
+
+        {/* ================= SECCIÓN DE SETLISTS & REPERTORIOS ================= */}
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex items-center justify-between mb-2 px-1 flex-shrink-0">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-stone-600 font-sans flex items-center gap-1.5">
+              <ListMusic className="w-3.5 h-3.5 text-amber-700" />
+              Mis Setlists ({setlists.length})
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsCreatingNew(!isCreatingNew)}
+              className="text-[11px] font-sans text-amber-800 hover:text-amber-950 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>{isCreatingNew ? 'Cancelar' : 'Nueva Lista'}</span>
+            </button>
+          </div>
+
+          {/* Formulario en línea para crear nuevo Setlist */}
+          {isCreatingNew && (
+            <motion.form
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              onSubmit={handleCreateSubmit}
+              className="p-2.5 mb-2 bg-amber-50/90 border border-amber-300 rounded-xl space-y-2 shadow-2xs flex-shrink-0"
+            >
+              <label className="text-[10.5px] font-sans font-bold text-stone-700 block">
+                Nombre del repertorio o fecha de show:
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  autoFocus
+                  value={newSetlistName}
+                  onChange={(e) => setNewSetlistName(e.target.value)}
+                  placeholder="Ej: Acústico en Bar..."
+                  className="flex-1 px-2.5 py-1 text-xs bg-white border border-stone-300 rounded-lg outline-none focus:ring-2 focus:ring-amber-500/20 font-sans text-stone-900"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-1 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-xs font-bold font-sans cursor-pointer transition-colors"
+                >
+                  Guardar
+                </button>
+              </div>
+            </motion.form>
           )}
-        </AnimatePresence>
+
+          {/* Lista de Carpetas de Setlists con autoscroll */}
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-1.5 custom-scrollbar">
+            {setlists.map((setlist) => {
+              const songCount = setlist.songs ? setlist.songs.length : (setlist.count || 0);
+              const isActive = activeLibraryFilter === 'setlist' && activeSetlist?.name === setlist.name;
+              const isDeleting = deletingSetlistName === setlist.name;
+
+              return (
+                <motion.div
+                  key={setlist.name}
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.99 }}
+                  onClick={() => onSelectSetlist && onSelectSetlist(setlist)}
+                  className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between group ${
+                    isActive
+                      ? 'bg-amber-100/90 border-amber-400 ring-2 ring-amber-400/30 text-amber-950 font-bold shadow-xs'
+                      : 'bg-white/80 hover:bg-white border-stone-200/90 hover:border-amber-300 shadow-2xs text-stone-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div
+                      className={`p-1.5 rounded-lg flex-shrink-0 transition-colors ${
+                        isActive
+                          ? 'bg-stone-900 text-amber-300'
+                          : 'bg-amber-100/70 text-amber-800 group-hover:bg-stone-900 group-hover:text-amber-300'
+                      }`}
+                    >
+                      <Folder className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-xs font-sans font-bold truncate group-hover:text-amber-950 transition-colors">
+                        {setlist.name}
+                      </h4>
+                      <span className="text-[10px] font-mono text-stone-500 font-medium">
+                        {songCount} {songCount === 1 ? 'tema' : 'temas'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                    {isDeleting ? (
+                      <div className="flex items-center gap-1 bg-red-50 border border-red-200 rounded-lg px-1.5 py-0.5">
+                        <span className="text-[10px] font-sans font-bold text-red-700">¿Borrar?</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteSetlist(setlist.name);
+                            setDeletingSetlistName(null);
+                          }}
+                          className="px-1.5 py-0.2 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold font-sans cursor-pointer"
+                        >
+                          Sí
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingSetlistName(null)}
+                          className="px-1.5 py-0.2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded text-[10px] font-bold font-sans cursor-pointer"
+                        >
+                          No
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setDeletingSetlistName(setlist.name)}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-stone-300 hover:text-red-600 hover:bg-red-50 rounded transition-all cursor-pointer"
+                        title="Eliminar este repertorio"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    <ChevronRight
+                      className={`w-4 h-4 transition-colors ${
+                        isActive ? 'text-amber-800' : 'text-stone-300 group-hover:text-amber-700'
+                      }`}
+                    />
+                  </div>
+                </motion.div>
+              );
+            })}
+
+            {setlists.length === 0 && !isCreatingNew && (
+              <div className="py-6 px-3 text-center bg-white/40 rounded-xl border border-dashed border-stone-300 text-stone-500 font-sans text-xs">
+                <Disc3 className="w-7 h-7 mx-auto mb-1.5 text-stone-400 opacity-60" />
+                <p className="font-semibold">No tienes setlists aún</p>
+                <p className="text-[10.5px] text-stone-400 mt-0.5">
+                  Crea listas para organizar tus ensayos y shows.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ================= BOTTOM PRO / UTILITY SECTION ================= */}
-      <div className="pt-4 border-t border-stone-200/70 space-y-2.5 mt-auto">
+      <div className="flex-shrink-0 pt-3 border-t border-stone-200/80 space-y-2 mt-2">
         {!isPro && (
           <button
             type="button"
             onClick={onOpenUpgradeModal}
-            className="w-full py-2 px-3 bg-amber-100 hover:bg-amber-200/90 text-amber-900 border border-amber-300 rounded-xl font-sans font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition-all"
+            className="w-full py-1.5 px-3 bg-amber-100 hover:bg-amber-200/90 text-amber-900 border border-amber-300 rounded-xl font-sans font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs transition-all"
           >
             <Crown className="w-3.5 h-3.5 text-amber-600" />
             <span>Desbloquear SongBook Pro</span>
           </button>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
             onClick={onOpenSearchModal}
-            className="py-2.5 px-3 bg-amber-100 hover:bg-amber-200/90 text-amber-950 border border-amber-300 rounded-xl font-sans font-bold text-xs shadow-sm flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+            className="py-2 px-2.5 bg-amber-100 hover:bg-amber-200/90 text-amber-950 border border-amber-300 rounded-xl font-sans font-bold text-[11px] sm:text-xs shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer transition-all truncate"
           >
-            <Globe className="w-3.5 h-3.5 text-amber-700" />
-            <span>Buscar en Web</span>
+            <Globe className="w-3.5 h-3.5 text-amber-700 flex-shrink-0" />
+            <span className="truncate">Buscar en Web</span>
           </button>
 
           <button
             type="button"
             onClick={onOpenSearchModal}
-            className="py-2.5 px-3 bg-stone-900 hover:bg-black text-amber-100 rounded-xl font-sans font-bold text-xs shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+            className="py-2 px-2.5 bg-stone-900 hover:bg-black text-amber-100 rounded-xl font-sans font-bold text-[11px] sm:text-xs shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer transition-all truncate"
           >
-            <Plus className="w-3.5 h-3.5 text-amber-400" />
-            <span>Nueva Canción</span>
+            <Plus className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+            <span className="truncate">Nueva Canción</span>
           </button>
         </div>
       </div>

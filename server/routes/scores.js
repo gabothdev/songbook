@@ -1,5 +1,5 @@
 import express from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../services/db.js';
 import { searchSongsterr, getFullScore, fetchSongsterrPart } from '../services/songsterr.js';
 import { songsterrToAlphaTex } from '../services/songsterrConverter.js';
 import { searchTangoScores, getTangoScoreDetails } from '../services/todotango.js';
@@ -8,7 +8,6 @@ import { digitizeWithAudiveris, isAudiverisAvailable } from '../services/audiver
 import { searchUnifiedScores, loadOrImportScore, getScoreFileStream } from '../services/sources/unifiedScoresService.js';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
 // ================= RUTAS UNIFICADAS MULTI-FUENTE =================
 
